@@ -69,7 +69,9 @@ exhaust the provider budget. Limits are configuration, tuned before production l
   microphone, geolocation.
 * `Cache-Control: no-store` on every API response carrying user content, and on exports.
 * Request body size capped at the reverse proxy as well as in the app.
-* Request ID assigned per request and returned to the client for support correlation.
+* Request ID assigned per request and returned to the client for support correlation. An
+  inbound `X-Request-Id` is treated as untrusted and accepted only if it matches
+  `[A-Za-z0-9._-]{1,64}`, so it cannot inject headers or smuggle content into logs.
 
 ## 6. Output and injection safety
 

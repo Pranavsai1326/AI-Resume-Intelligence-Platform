@@ -32,7 +32,7 @@ that enforce it, the tests that prove it, and — importantly — the limits we 
 Tab-close events are explicitly **not** the deletion mechanism (Rule 12).
 
 ```
-Layer 1  Client cleanup      pagehide/visibilitychange -> sendBeacon DELETE /v1/session   (best effort)
+Layer 1  Client release      pagehide -> sendBeacon POST /v1/session/release              (best effort)
 Layer 2  TTL expiry          every key carries its own TTL; idle TTL + absolute cap        (authoritative)
 Layer 3  Janitor sweep       periodic task: expired namespaces, orphaned keys, temp files  (safety net)
 Layer 4  Startup sweep       temp dir purged on boot; stale namespaces reconciled          (crash recovery)
@@ -40,6 +40,14 @@ Layer 4  Startup sweep       temp dir purged on boot; stale namespaces reconcile
 
 Layer 2 alone is sufficient for correctness. Layers 1, 3 and 4 reduce the window and clean up after
 crashes, forced termination, device shutdown, and network loss.
+
+Layer 1 *releases* rather than destroys. `pagehide` fires on a reload and on ordinary navigation
+as well as on a genuine tab close, and no browser API distinguishes them - destroying on that
+signal would throw away the user's work every time they pressed refresh. Release collapses the
+session (and every object beneath it) to a ~2 minute deadline: a page that comes back resumes with
+its full TTL restored, and a tab that is really gone is cleaned up in minutes instead of an hour.
+The explicit "End session" control still destroys immediately, because there the user's intent is
+unambiguous.
 
 ## 4. Browser storage policy
 
@@ -125,6 +133,8 @@ These are product requirements, not optional extras:
 8. Logs contain no resume content.
 9. Export responses leave no server-side artifact.
 10. Job queue entries for an expired session are cancelled and their inputs dropped.
+11. A released session, and every object beneath it, expires within the grace window with no
+    further client contact.
 
 ## 11. What we tell users — and what we refuse to claim
 

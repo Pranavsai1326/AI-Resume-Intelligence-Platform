@@ -85,7 +85,8 @@ Rule: no source file over ~400 lines. A module that outgrows it is split by resp
   "expires_at":       "2026-08-22T11:12:31Z",
   "hard_expires_at":  "2026-08-22T18:00:00Z",
   "mode":             "candidate | recruiter",
-  "counters":         { "documents": 3, "ai_calls": 11 }
+  "counters":         { "documents": 3, "ai_calls": 11 },
+  "released":         false
 }
 ```
 
@@ -94,6 +95,9 @@ Rule: no source file over ~400 lines. A module that outgrows it is split by resp
 * Every object lives under `sess:{session_id}:{kind}:{object_id}` and **every key carries its own
   TTL**, so expiry stays correct even if the metadata key is lost — no orphans by construction.
 * `DELETE /v1/session` destroys the whole namespace synchronously.
+* `POST /v1/session/release` collapses the session to a short grace window when the client
+  page goes away. Deliberately not a destroy - `pagehide` cannot distinguish a closed tab
+  from a reload. Object TTLs collapse with it and are restored if the user returns.
 * Session IDs are never logged in full (first 8 characters only, for correlation).
 
 ## 5. Data flow — candidate

@@ -38,7 +38,21 @@ Categories: `validation`, `session`, `rate_limit`, `unavailable`, `timeout`, `in
 | `POST` | `/v1/session` | Create an ephemeral session. Body: `{ "mode": "candidate" \| "recruiter" }`. Returns session metadata incl. `expires_at`. |
 | `GET` | `/v1/session` | Current session metadata and counters. Refreshes idle TTL. |
 | `POST` | `/v1/session/heartbeat` | Extend idle TTL without other work. Never extends the absolute cap. |
-| `DELETE` | `/v1/session` | Destroy the session namespace immediately. Safe to call via `sendBeacon`. Always `204`. |
+| `DELETE` | `/v1/session` | Destroy the session namespace immediately (explicit "end session"). Idempotent, always `204`, and reveals nothing about whether the id existed. |
+| `POST` | `/v1/session/release` | Beacon endpoint for page teardown: shortens the session to a grace window (default 120 s) instead of destroying it. Body is `{"session_id": "..."}` sent as `text/plain`. Always `204`. |
+
+### Why release rather than destroy
+
+`navigator.sendBeacon` cannot set headers, so `/v1/session/release` takes the id in the body; and
+an `application/json` content type would trigger a CORS preflight an unloading page may never
+finish, so the body is sent as `text/plain` (CORS-safelisted) and parsed server-side.
+
+It shortens rather than destroys because `pagehide` fires on a reload and on ordinary navigation
+as well as on a real tab close, and the browser offers no way to tell them apart. Destroying there
+would discard the user's work on every refresh. Collapsing the deadline keeps the cleanup benefit
+for a genuinely closed tab - it dies in ~2 minutes rather than an hour - while a page that returns
+resumes the session and its full idle TTL. Object TTLs are collapsed and restored with it, so
+nothing outlives its session.
 
 ## Documents
 

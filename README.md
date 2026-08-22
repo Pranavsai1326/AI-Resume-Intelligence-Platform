@@ -16,8 +16,25 @@ cleanup, authoritative TTL expiry, a periodic janitor sweep, and a startup sweep
 
 ## Status
 
-**Phase 0 complete** — product, architecture, privacy, AI, API and security design are documented.
-Implementation starts with the Phase 1 foundation slice. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+**Phase 1 complete** — the ephemeral session foundation is built, tested and running: session
+lifecycle with sliding and absolute TTLs, two interchangeable store backends, four-layer cleanup,
+redacting logs, sanitised errors, rate limiting, health probes, and a Next.js shell with a
+privacy-first landing page. Phase 2 (document processing) is next.
+See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+
+## Running it locally
+
+No Docker, no Redis, no database and no API key required.
+
+```bash
+# Backend — from backend/
+../.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8000
+
+# Frontend — from frontend/
+npm install && npm run dev        # http://localhost:3000
+```
+
+Copy `.env.example` to `backend/.env` to change any defaults.
 
 ## Documentation
 
