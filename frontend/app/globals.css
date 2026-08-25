@@ -30,6 +30,20 @@
   --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, monospace;
 
   --radius-card: 0.75rem;
+
+  /* Fixed type scale (Phase 9E) - every redesigned component reads from these instead of
+     picking Tailwind sizes ad hoc, so hierarchy stays consistent across the whole product. */
+  --text-display: 2.5rem;
+  --text-h1: 1.5rem;
+  --text-h2: 1.125rem;
+  --text-body: 0.9375rem;
+  --text-small: 0.8125rem;
+  --text-micro: 0.6875rem;
+
+  /* Spacing rhythm (Phase 9E), 4px base unit. */
+  --space-section: 2.5rem;
+  --space-card: 1rem;
+  --space-inline: 0.5rem;
 }
 
 @media (prefers-color-scheme: dark) {

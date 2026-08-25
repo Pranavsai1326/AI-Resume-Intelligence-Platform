@@ -10,6 +10,7 @@ import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ProgressRail, type RailStep } from "@/components/ui/progress-rail";
 import {
   ApiError,
   api,
@@ -139,6 +140,41 @@ export function ScreeningWorkspace({ sessionId }: { sessionId: string }) {
 
   const openCandidate = candidates.find((c) => c.candidate_id === openCandidateId) ?? null;
 
+  const scrollTo = (id: string) => {
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const railSteps: RailStep[] = [
+    { key: "job", label: "Job", reachable: true, complete: screening !== null },
+    {
+      key: "upload",
+      label: "Upload candidates",
+      reachable: screening !== null,
+      reason: "Start a screening first.",
+      complete: candidates.length > 0,
+    },
+    {
+      key: "rank",
+      label: "Rank",
+      reachable: candidates.length > 0,
+      reason: "Upload candidates first.",
+    },
+    {
+      key: "compare",
+      label: "Compare/Shortlist",
+      reachable: candidates.length > 0,
+      reason: "Upload candidates first.",
+    },
+    { key: "export", label: "Export", reachable: false, reason: "Not built yet." },
+  ];
+  const currentRailKey = !screening
+    ? "job"
+    : candidates.length === 0
+      ? "upload"
+      : selected.size > 0 || comparison
+        ? "compare"
+        : "rank";
+
   if (openCandidate && screening) {
     return (
       <CandidateDetail
@@ -153,7 +189,9 @@ export function ScreeningWorkspace({ sessionId }: { sessionId: string }) {
 
   return (
     <div className="space-y-5">
-      <Card>
+      <ProgressRail steps={railSteps} currentKey={currentRailKey} onSelect={scrollTo} />
+
+      <Card id="job">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Users aria-hidden className="size-4 text-accent" />
@@ -201,7 +239,7 @@ export function ScreeningWorkspace({ sessionId }: { sessionId: string }) {
       </Card>
 
       {screening ? (
-        <Card>
+        <Card id="upload">
           <CardHeader>
             <CardTitle>Upload candidates</CardTitle>
             <p className="text-sm text-ink-muted">
@@ -247,7 +285,7 @@ export function ScreeningWorkspace({ sessionId }: { sessionId: string }) {
       ) : null}
 
       {screening && candidates.length > 0 ? (
-        <div className="space-y-4">
+        <div id="rank" className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold text-ink">Ranking</h3>
             <Button
@@ -265,7 +303,11 @@ export function ScreeningWorkspace({ sessionId }: { sessionId: string }) {
             onToggleSelect={toggleSelect}
             onOpen={setOpenCandidateId}
           />
-          {comparison ? <ComparisonMatrix result={comparison} /> : null}
+          {comparison ? (
+            <div id="compare">
+              <ComparisonMatrix result={comparison} />
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

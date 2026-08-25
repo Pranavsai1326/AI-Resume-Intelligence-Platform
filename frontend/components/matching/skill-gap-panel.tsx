@@ -1,14 +1,16 @@
 import { CheckCircle2, CircleDashed, CircleHelp, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { SkillGapBucket, SkillGapResult } from "@/lib/api-client";
 
 /*
   Skill gap breakdown (PRD section 22): Strong / Moderate / Missing / Insufficient-evidence,
   grouped and explained rather than a flat list - the bucket itself is the headline, the resume-
-  specific evidence sentence is the detail.
+  specific evidence sentence is the detail. Phase 9E: de-nested (no outer card - the caller
+  provides the section heading) and directly linked to Learning Priorities so the user isn't
+  asked to paste the same job description again to see what to learn next.
 */
 
 const BUCKET_ORDER: SkillGapBucket[] = ["missing", "insufficient_evidence", "moderate", "strong"];
@@ -27,22 +29,36 @@ const BUCKET_META: Record<
   },
 };
 
-export function SkillGapPanel({ result }: { result: SkillGapResult }) {
+export function SkillGapPanel({
+  result,
+  onViewLearningPriorities,
+}: {
+  result: SkillGapResult;
+  onViewLearningPriorities?: () => void;
+}) {
   if (result.entries.length === 0) {
     return null;
   }
 
+  const missingOrUnclear = result.entries.filter(
+    (e) => e.bucket === "missing" || e.bucket === "insufficient_evidence",
+  ).length;
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Skill Gaps</CardTitle>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="text-sm text-ink-muted">
           {result.semantic_available
             ? "Includes skills that aren't an exact match but are plausibly covered by something you listed."
             : "Exact-match only on this deployment - semantic matching is not configured, so nothing is marked “worth confirming.”"}
         </p>
-      </CardHeader>
-      <CardContent className="space-y-5">
+        {onViewLearningPriorities && missingOrUnclear > 0 ? (
+          <Button type="button" variant="secondary" size="sm" onClick={onViewLearningPriorities}>
+            See what to learn next
+          </Button>
+        ) : null}
+      </div>
+      <div className="space-y-5">
         {BUCKET_ORDER.map((bucket) => {
           const entries = result.entries.filter((e) => e.bucket === bucket);
           if (entries.length === 0) return null;
@@ -69,7 +85,7 @@ export function SkillGapPanel({ result }: { result: SkillGapResult }) {
             </div>
           );
         })}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

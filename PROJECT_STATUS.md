@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 9 in progress (9B complete, 9C next)
+**Last updated:** 2026-08-25 · **Current phase:** Phase 9 in progress (9D + 9E complete, 9F next)
 
 **Phase 9 was revised** after Phase 8 shipped: see [PHASE_9_IMPLEMENTATION_PLAN.md](PHASE_9_IMPLEMENTATION_PLAN.md)
 for the full sub-phase breakdown (9A architecture baseline → 9B privacy/consent → 9C extraction
@@ -535,17 +535,123 @@ notations (season+year, academic-year ranges like "2019/2020"). None were found 
 *was* tested; they are simply outside what got exercised this pass, named here rather than
 silently assumed fine.
 
-## In progress
+### Phase 9D + 9E — Extraction review UI and frontend redesign
 
-Phase 9D (extraction review UI) is next - see
-[PHASE_9_IMPLEMENTATION_PLAN.md](PHASE_9_IMPLEMENTATION_PLAN.md).
+Implemented together as one coordinated effort, on a shared design system built first, per the
+approved design spec (design/UX proposal → user-approved requirements list → this implementation).
+No backend changes were needed - every screen below reuses existing API contracts.
+
+**Design system** (`frontend/lib/design-tokens.ts`, `frontend/app/globals.css`)
+
+Fixed 6-step type scale (`--text-display` … `--text-micro`) and a spacing rhythm
+(`--space-section`/`--space-card`/`--space-inline`) so redesigned components stop inventing their
+own sizes ad hoc. The existing OKLCH neutral/accent/semantic palette, radius, and motion rules
+(including `prefers-reduced-motion`) are unchanged - no gradients, no new decorative colour.
+
+**Shared primitives** (`frontend/components/ui/`)
+
+* `ProgressRail` - communicates the recommended journey without forcing it: every step stays
+  visible, disabled steps explain why (`aria-label`d), `aria-current="step"` on the active one,
+  collapses to a `3/8 · Review` fraction under `sm`. Candidate and recruiter modes get separate
+  step sets rendered by separate call sites - never one shared rail with irrelevant steps grayed
+  out.
+* `AiProposalCard` - the one interaction pattern (idle → loading → proposal-with-fact-guard-
+  findings → accept/discard, or a calm unavailable/error state) now reused by bullet/summary
+  rewriting, cover letters, and interview questions alike (`ai-rewrite-control.tsx` and
+  `career-panel.tsx` were both rebuilt on top of it).
+* `ConfidenceHint` - a quiet "Check this" affordance shown only on genuinely low-confidence
+  extracted fields (`provenance.kind === "extracted" && confidence < 0.55`); nothing else in the
+  UI shows a confidence percentage or badge.
+* `SectionCard` - a plain heading + content grouping, replacing card-in-a-card-in-a-card nesting
+  on the Health/Match/Career screens.
+
+**Extraction review** (`frontend/components/builder/extraction-review.tsx`, extended
+`section-editor.tsx`, new `date-range-editor.tsx`)
+
+The mandatory confirmation boundary the plan called for: Upload → Extraction (automatic) →
+Review/Edit → **Confirm resume & continue** → everything downstream. Built on the existing
+`SectionEditor`/`resume-edit.ts` machinery rather than a new editing paradigm - the gaps identified
+during design review are now closed:
+
+* Dates are editable everywhere (`DateRangeEditor`: start/end month + a Present toggle).
+* `custom_sections` has a full editor (title + bullets) for the first time.
+* Projects gained `description`; Education gained `field_of_study` and `location`.
+* **"Move to..."** reclassifies an entry between structurally compatible sections
+  (`lib/resume-edit.ts::moveEntryToSection` + `compatibleSections`): experience ↔ projects ↔
+  custom sections, and education ↔ certifications ↔ custom sections. Every direction has a
+  field-mapping conversion function that folds non-mapping data into the closest text field
+  (a bullet, a note) rather than silently dropping it; moving marks the entry `user_provided`,
+  same as any other edit.
+* "View original extraction" reuses the version already created at upload time (`version 1`) - no
+  second persistent copy, just `GET /v1/resume/versions/{id}` on demand.
+* Confirming persists the edited resume as a new version (existing `POST /v1/resume/versions`) and
+  sets a client-only `hasConfirmedResume` flag that gates `ProgressRail` reachability - not a new
+  kind of persisted state, and re-derivable from "does this document have ≥1 version" on reload.
+
+**Candidate journey** (`frontend/components/workspace/candidate-workspace.tsx`, new; replaces the
+deleted `resume-analyzer.tsx` and `resume-builder.tsx`)
+
+The flat "everything stacked on one page" workspace is now a rail-driven journey: Upload → Review
+→ Health → Match → Gaps → Improve → Career AI → Export. Not a wizard - every reachable step is
+directly clickable; a step is gated only by an actual data dependency (a resume, a confirmation, a
+match), never by "have you visited the previous step." Health/Match no longer show the internal
+`methodology`/version string; Career AI reuses the job/match already computed in the Match step
+instead of asking for the job description a second time, and shows a calm "Run a job match first
+to unlock Career AI" empty state when there isn't one yet. Export shows the version label next to
+the download buttons.
+
+**Recruiter workspace** (`frontend/components/screening/screening-workspace.tsx`)
+
+Gained its own `ProgressRail` (Job → Upload Candidates → Rank → Compare/Shortlist → Export) laid
+over the existing continuous-scroll layout via anchor ids, without restructuring the working
+upload/poll/rank/compare/shortlist logic. "Export" is honestly marked not-built-yet (`reachable:
+false`) rather than a fake step - there is no bulk-export capability in the backend and none was
+added, per the "don't introduce fake functionality" rule already established in earlier phases.
+
+**Content cleanup**
+
+Removed from the user-facing UI: the "Phase N of the build is live" banner, the raw server-
+capability badges (`llm: not configured`, `embeddings: available`, …), the post-upload parser
+statistics grid (replaced with a one-line confirmation), and the `methodology`/version string on
+Health and Match. All of that information remains available - the banner text simply isn't
+reproduced anywhere else, since it was development-log language, not product copy.
+
+**Privacy wording correction**
+
+`consent-gate.tsx` no longer implies that closing the tab deletes data immediately - it now states
+plainly that data is temporary and auto-deleted on the stated schedule, that a reload within the
+window restores the session, and that "End session & delete data" is the immediate option. It also
+now distinguishes *this application's* temporary session storage from *processing by Google
+Gemini* when an AI feature is explicitly invoked, rather than the earlier, broader "AI provider"
+phrasing.
+
+**Verification** — all green:
+
+```
+frontend   52 passed (10 new, moveEntryToSection/compatibleSections/formatDateRange)   eslint clean   tsc --noEmit clean   next build clean
+backend    563 passed, 10 skipped (unchanged - no backend code touched this phase)
+```
+
+Verified live end to end against a running backend (`.venv`, memory session store): consent →
+decline → re-agree → candidate session → upload a realistic multi-section TXT resume → extraction
+review renders all sections including the ALL-CAPS "AWARDS" section correctly mapped to a custom
+section → moved an experience entry to Projects via "Move to..." and confirmed the conversion
+(bullets, dates, and technologies all preserved) → viewed the original extraction side by side →
+confirmed the resume → auto-advanced to Health (score rendered, no methodology text) → pasted a
+job description and matched → Gaps showed the same bucketed breakdown with a "See what to learn
+next" link → Career AI reused the match with no JD re-entry, cover letter correctly reported itself
+unavailable (no `LLM_PROVIDER` configured) while Learning Priorities worked with no key at all →
+Export showed the current version label → "End session & delete data" returned to the mode-select
+screen → started a recruiter session and confirmed its separate rail renders independently of the
+candidate one. Zero browser console errors throughout. (File upload was driven by dispatching a
+synthetic `File`/`DataTransfer` onto the input via the browser tool's JS execution, since the
+automation tool available this session has no native file-picker support - the same limitation
+noted in Phases 5-7.)
 
 ## Planned
 
 | Sub-phase | Scope |
 |---|---|
-| 9D | Extraction review UI - user can inspect and correct the structured resume before it becomes the source of truth for everything downstream |
-| 9E | Complete frontend redesign around the real product journey; remove unnecessary UI text |
 | 9F | Gemini AI integration (`GeminiProvider` behind the existing `LLMProvider` abstraction), replacing Anthropic as the configured provider |
 | 9G | Bounded, fact-guarded AI career workflow tying analysis → match → gaps → proposals → re-analysis together |
 | 9H | Full end-to-end product QA across every flow with real documents |

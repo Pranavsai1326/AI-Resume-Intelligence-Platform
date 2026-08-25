@@ -1,5 +1,4 @@
 import { ComponentScoreList, overallBand } from "@/components/analysis/component-score-list";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import type { ResumeHealthResult } from "@/lib/api-client";
 
@@ -12,28 +11,21 @@ const COMPONENT_ORDER = [
   "impact",
 ];
 
+/*
+  Phase 9E: no outer card, no methodology/version string - the overall score and band sit
+  directly under the section heading the caller provides, followed by the component breakdown.
+*/
 export function HealthReport({ result }: { result: ResumeHealthResult }) {
   const band = overallBand(result.overall);
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Resume Health</CardTitle>
-        </CardHeader>
-        <CardContent className="flex items-center gap-6">
-          <div className="text-5xl font-semibold tabular-nums text-ink">
-            {Math.round(result.overall)}
-          </div>
-          <div>
-            <p className={cn("font-medium", band.className)}>{band.label}</p>
-            <p className="text-sm text-ink-subtle">
-              Weighted across all six components below (methodology:{" "}
-              {result.methodology.profile ?? "default"} v{result.methodology.version ?? "1.0.0"})
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="space-y-5">
+      <div className="flex items-center gap-6">
+        <div className="text-[length:var(--text-display)] font-semibold tabular-nums text-ink">
+          {Math.round(result.overall)}
+        </div>
+        <p className={cn("font-medium", band.className)}>{band.label}</p>
+      </div>
 
       {result.degraded.length > 0 ? (
         <p className="text-sm text-ink-subtle">

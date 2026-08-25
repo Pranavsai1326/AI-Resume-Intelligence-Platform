@@ -18,9 +18,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const CONSENT_POINTS = [
-  "No account is created and nothing you upload is written to a database. Your resume, any job description, and anything generated live only in a temporary server session.",
-  "The session is deleted automatically after 60 minutes of inactivity, or 8 hours at the outside — whichever comes first — and you can delete it immediately at any time with \"End session & delete data\".",
-  "If you use an AI-assisted feature (rewriting, tailoring, cover letters, interview prep), the minimum necessary text is sent to the configured AI provider to generate that one response. If no provider is configured, those features report themselves unavailable rather than faking a result.",
+  "No account is created and nothing you upload is written to a permanent database. Your resume, any job description, and anything generated live only in a temporary server session.",
+  "That session is deleted automatically after 60 minutes of inactivity, or 8 hours at the outside — whichever comes first. Closing this tab does not delete it immediately; reopening within that window restores it. Use \"End session & delete data\" at any time for immediate, permanent deletion.",
+  "By default nothing leaves this application except to that temporary session store. If you use an AI-assisted feature (rewriting, tailoring, cover letters, interview prep, career suggestions), the relevant resume or job text is sent to our AI provider (Google Gemini) to generate that one response — and only then. If no provider is configured, those features report themselves unavailable rather than faking a result.",
 ];
 
 export function ConsentGate({
@@ -52,9 +52,10 @@ export function ConsentGate({
           <div className="flex items-start gap-2.5 rounded-card border border-warning/40 bg-warning-soft p-3 text-sm text-ink">
             <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
             <p>
-              Closing this tab does not delete your data instantly — browsers give no guarantee
-              that any code runs on a crash or a forced close. Deletion is enforced by the server
-              on the schedule above, not by the browser.
+              Your data is temporary, not instantly erased on tab close — that&apos;s what lets a
+              reload rejoin your work instead of losing it. Deletion happens automatically on the
+              schedule above, or immediately if you choose &quot;End session &amp; delete
+              data.&quot;
             </p>
           </div>
 

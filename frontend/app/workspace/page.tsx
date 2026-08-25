@@ -1,67 +1,29 @@
 "use client";
 
 import * as React from "react";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { ResumeAnalyzer } from "@/components/analysis/resume-analyzer";
 import { AppShell } from "@/components/layout/app-shell";
+import { CandidateWorkspace } from "@/components/workspace/candidate-workspace";
 import { ScreeningWorkspace } from "@/components/screening/screening-workspace";
 import { ConsentGate } from "@/components/session/consent-gate";
 import { useSessionActions } from "@/components/session/session-provider";
 import { Alert, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { api, type ReadyInfo } from "@/lib/api-client";
 import { useSessionStore } from "@/stores/session-store";
-
-/*
-  Workspace.
-
-  The module list shows honest availability rather than buttons that lead nowhere - a module
-  appears as available only when its backend exists (RULE 8: no fake functionality). Upload and
-  analysis (Phases 2-3) are real; they render as the interactive flow above the list rather than
-  as another "not built yet" card.
-*/
-
-interface ModuleCard {
-  key: string;
-  title: string;
-  description: string;
-  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
-  phase: string;
-  available: boolean;
-}
-
-// Job matching, tailoring, the resume builder, and career intelligence (Phase 4-6) are real and
-// render inline in the upload -> analyze flow above rather than as another "not built yet" card -
-// see ResumeAnalyzer / ResumeBuilder / CareerPanel. Bulk screening, ranking, comparison and
-// shortlisting (Phase 7) are real too - see ScreeningWorkspace.
-const CANDIDATE_MODULES: ModuleCard[] = [];
-const RECRUITER_MODULES: ModuleCard[] = [];
 
 export default function WorkspacePage() {
   const status = useSessionStore((s) => s.status);
   const info = useSessionStore((s) => s.info);
   const error = useSessionStore((s) => s.error);
   const { start } = useSessionActions();
-  const [ready, setReady] = React.useState<ReadyInfo | null>(null);
   const router = useRouter();
   // Plain component state, nothing persisted (Phase 9B) - consent is tied to the act of
   // starting a session in this page load, not a saved preference. A reload asks again.
   const [consented, setConsented] = React.useState(false);
-
-  React.useEffect(() => {
-    if (status !== "active") return;
-    const controller = new AbortController();
-    api
-      .ready(controller.signal)
-      .then(setReady)
-      .catch(() => setReady(null));
-    return () => controller.abort();
-  }, [status]);
 
   if (status === "starting") {
     return (
@@ -92,7 +54,7 @@ export default function WorkspacePage() {
     return (
       <AppShell>
         <div className="mx-auto max-w-2xl py-8">
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">
+          <h1 className="text-[length:var(--text-h1)] font-semibold tracking-tight text-ink">
             Start a temporary session
           </h1>
           <p className="mt-3 text-ink-muted">
@@ -144,112 +106,11 @@ export default function WorkspacePage() {
     );
   }
 
-  const modules = info.mode === "recruiter" ? RECRUITER_MODULES : CANDIDATE_MODULES;
-
   return (
     <AppShell>
       <div className="space-y-8">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">
-            {info.mode === "recruiter" ? "Screening workspace" : "Candidate workspace"}
-          </h1>
-          <p className="mt-2 text-ink-muted">
-            Your session is active. Anything you add stays here until it expires, then it is
-            removed from the server.
-          </p>
-        </div>
-
-        <Alert>
-          <AlertTitle>Phase 7 of the build is live</AlertTitle>
-          <p className="text-ink-muted">
-            Upload, resume analysis, job matching, the resume builder, AI-assisted tailoring,
-            export, cover letters, interview prep, learning priorities, and recruiter screening
-            all work end to end below. Anything not built yet is listed honestly with its real
-            status — none of it will show you a fabricated result.
-          </p>
-        </Alert>
-
-        {info.mode === "candidate" ? (
-          <section aria-labelledby="analyzer-heading">
-            <h2 id="analyzer-heading" className="text-lg font-semibold text-ink">
-              Analyze your resume
-            </h2>
-            <p className="mt-2 text-sm text-ink-muted">
-              Upload a resume to see how it reads to an ATS parser and a human reviewer, with
-              every score explained.
-            </p>
-            <div className="mt-4">
-              <ResumeAnalyzer sessionId={info.session_id} />
-            </div>
-          </section>
-        ) : null}
-
-        {info.mode === "recruiter" ? (
-          <section aria-labelledby="screening-heading">
-            <h2 id="screening-heading" className="text-lg font-semibold text-ink">
-              Screen candidates
-            </h2>
-            <p className="mt-2 text-sm text-ink-muted">
-              Blind review by default: identity and protected attributes are redacted before any
-              score is computed and before you ever see a candidate.
-            </p>
-            <div className="mt-4">
-              <ScreeningWorkspace sessionId={info.session_id} />
-            </div>
-          </section>
-        ) : null}
-
-        {modules.length > 0 ? (
-        <section aria-labelledby="modules-heading">
-          <h2 id="modules-heading" className="text-lg font-semibold text-ink">
-            {info.mode === "candidate" ? "More modules" : "Modules"}
-          </h2>
-          <div className="mt-4 grid gap-5 md:grid-cols-3">
-            {modules.map((module) => (
-              <Card key={module.key} className="flex flex-col">
-                <CardHeader>
-                  <module.icon aria-hidden className="size-5 text-ink-subtle" />
-                  <CardTitle>{module.title}</CardTitle>
-                  <CardDescription>{module.description}</CardDescription>
-                </CardHeader>
-                <CardContent className="mt-auto">
-                  {module.available ? (
-                    <Badge variant="success">Available</Badge>
-                  ) : (
-                    <Badge variant="neutral">Not built yet — {module.phase}</Badge>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-        ) : null}
-
-        <section aria-labelledby="capabilities-heading">
-          <h2 id="capabilities-heading" className="text-lg font-semibold text-ink">
-            Server capabilities
-          </h2>
-          <p className="mt-2 text-sm text-ink-muted">
-            Reported by the backend, so the interface never offers something this deployment
-            cannot actually do.
-          </p>
-          {ready ? (
-            <ul className="mt-4 flex flex-wrap gap-2">
-              {Object.entries(ready.capabilities).map(([name, enabled]) => (
-                <li key={name}>
-                  <Badge variant={enabled ? "success" : "neutral"}>
-                    {name.replace(/_/g, " ")}: {enabled ? "available" : "not configured"}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-4 flex items-center gap-2 text-sm text-ink-subtle">
-              <Loader2 aria-hidden="true" className="size-4 animate-spin" />
-              Checking capabilities…
-            </p>
-          )}
-        </section>
+        {info.mode === "candidate" ? <CandidateWorkspace sessionId={info.session_id} /> : null}
+        {info.mode === "recruiter" ? <ScreeningWorkspace sessionId={info.session_id} /> : null}
       </div>
     </AppShell>
   );
