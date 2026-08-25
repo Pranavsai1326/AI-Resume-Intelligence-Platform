@@ -22,6 +22,7 @@ from app.core.errors import DocumentProcessingTimeoutError, NotFoundError
 from app.core.ratelimit import RateLimitRule
 from app.documents.extract import extract
 from app.documents.extract.base import LayoutSignals
+from app.documents.storage import DOCUMENT_TTL_SECONDS, StoredDocument
 from app.documents.structure import build_resume
 from app.documents.tempfile_scope import read_upload_bounded
 from app.documents.upload import DocumentKind, sniff_kind
@@ -34,9 +35,6 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 #: Wall-clock ceiling for one extraction pass - every parse stage is bounded, so a hung parser
 #: fails the request rather than the process (SECURITY.md section 2).
 EXTRACTION_TIMEOUT_SECONDS = 20
-#: Documents are session-scoped working data, not indefinitely cached; capped at the idle TTL
-#: default rather than given their own longer lifetime.
-DOCUMENT_TTL_SECONDS = 3600
 
 
 class ResumeSummary(BaseModel):
@@ -96,19 +94,6 @@ class DocumentDetail(BaseModel):
     resume: Resume | None
 
 
-class _StoredDocument(BaseModel):
-    """Internal session-storage shape. Never returned directly from an endpoint."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    document_id: str
-    kind: DocumentKind
-    layout: LayoutSignals
-    ocr_used: bool
-    text: str
-    resume: Resume | None
-
-
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=DocumentUploadResponse)
 async def upload_document(
     session: ActiveSessionDep,
@@ -129,7 +114,7 @@ async def upload_document(
     if cached_id:
         cached_raw = await manager.get_object(session, "document", cached_id)
         if cached_raw:
-            stored = _StoredDocument.model_validate_json(cached_raw)
+            stored = StoredDocument.model_validate_json(cached_raw)
             return DocumentUploadResponse(
                 document_id=stored.document_id,
                 kind=stored.kind,
@@ -153,7 +138,7 @@ async def upload_document(
     resume = build_resume(result.text) if kind == "resume" else None
 
     document_id = secrets.token_hex(12)
-    stored = _StoredDocument(
+    stored = StoredDocument(
         document_id=document_id,
         kind=result.kind,
         layout=result.layout,
@@ -195,7 +180,7 @@ async def get_document(
     raw = await manager.get_object(session, "document", document_id)
     if raw is None:
         raise NotFoundError
-    stored = _StoredDocument.model_validate_json(raw)
+    stored = StoredDocument.model_validate_json(raw)
     return DocumentDetail(
         document_id=stored.document_id,
         kind=stored.kind,

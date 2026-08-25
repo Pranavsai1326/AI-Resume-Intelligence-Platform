@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 2 complete → Phase 3 ready to start
+**Last updated:** 2026-08-25 · **Current phase:** Phase 3 complete → Phase 4 ready to start
 
 > Read this file first in every session, then only the architecture docs relevant to the task.
 > Update it after every meaningful implementation change.
@@ -127,29 +127,81 @@ running the pipeline against synthetic fixtures, not assumed correct from readin
 Each of these is now a named regression test (`tests/unit/test_sections.py`,
 `tests/unit/test_structure.py`) so the specific input that broke it stays covered.
 
+### Phase 3 — Resume analyzer
+
+**Backend** (`backend/app/analysis/`)
+
+| Area | Delivered |
+|---|---|
+| Scoring engine | `compute_resume_health(resume, layout, profile)` orchestrates six independently-scored components into one weighted overall; weights come from a validated `ScoringProfile` (must cover exactly the six known components, must sum to 1.0), never hardcoded at a call site |
+| ATS Compatibility | Parsing simulation (name/email/phone/experience/dates detectable by our own extractor) plus formatting risk from Phase 2's `LayoutSignals` (multi-column, tables, images, text boxes, repeating header/footer) |
+| Formatting | Standard-section presence, bullet-backed experience entries, page-length signal where measurable (PDF only — DOCX/TXT are not penalised for a property they cannot express) |
+| Content Quality | Weak/passive phrasing, first-person pronouns, action-verb-opening ratio, bullet length, over shared bullet-extraction and lexicon helpers (`text_metrics.py`, `taxonomy.py`) |
+| Skills Coverage | Section presence, breadth, categorisation, and whether listed skills are also demonstrated in experience bullets; a curated skills taxonomy adds positive credit only — an unrecognised skill is never penalised |
+| Experience Quality | Bullets-per-role, date completeness, quantification and action-verb ratios per role |
+| Impact | Quantified-detail density and outcome-verb ratio across every bullet, plus a volume signal so a one-bullet resume cannot score as "high impact" by chance |
+| Every component | Returns `{score, weight, evidence[], explanation, available}`; every evidence item is `positive`, `info` or `warning` with a concrete message — no score is ever returned bare |
+| Degrade/renormalise | Built even though nothing degrades yet (every component here is deterministic, Layer 1, no external dependency) — so a future component needing an external dependency (e.g. semantic relevance in Phase 4) degrades the identical way rather than as a special case |
+| API | `POST /v1/analysis/resume` (body `{document_id}`) and `GET /v1/analysis/{analysis_id}`; analysis is compute-once and session-cached per document, mirroring the Phase 2 upload cache |
+
+**Frontend** (`frontend/components/analysis/`)
+
+The first real feature surface, added now rather than in Phase 2 because uploading with nothing
+to show for it is a worse experience than not offering it yet. Drag/click upload → real-time
+summary of what was extracted → "Analyze resume health" → full report: overall score and band,
+six component cards (score bar + expandable evidence), the lowest-scoring component pre-expanded
+so the reader's eye goes straight to what needs attention. Wired into the candidate workspace.
+
+**Verification** — all green:
+
+```
+backend    287 passed, 10 skipped (Redis, no server present)   ruff clean   mypy --strict clean
+frontend   24 passed   eslint clean   tsc --noEmit clean   next build clean
+```
+
+Also verified live end to end: a synthetic resume was uploaded through the real running frontend
+(via the actual `File`/`fetch` code path, not a mock) against the real running backend, producing
+an overall score of 90 ("Strong") with all six components rendered and the correct component
+pre-expanded — plus confirmed `localStorage` stays empty throughout.
+
+### Defects found and fixed during Phase 3
+
+1. **Wrong grammatical article** ("A experience section", "A education section") in Formatting's
+   evidence messages — user-facing text, fixed to use the correct article per section.
+2. **Singular/plural verb agreement** in two evidence messages ("1 work experience entry *were*
+   detected", "1 bullet *use* first-person pronouns") — found by an adversarial single-entry test
+   fixture, fixed to compute noun/verb agreement from the count.
+
+Both were caught by manually inspecting real component output against synthetic fixtures — not
+things a type checker or a passing assertion would have caught, which is why the models were
+smoke-tested against printed output before the formal test suite was written.
+
 ## In progress
 
-Nothing. Phase 2 is committed.
+Nothing. Phase 3 is committed.
 
-## Next task — Phase 3 (resume analyzer)
+## Next task — Phase 4 (job intelligence)
 
-1. Resume health score: six sub-scores (ATS compatibility, content quality, skills coverage,
-   experience quality, formatting, impact), each with inputs, weights and evidence exposed
-2. ATS compatibility analysis building on Phase 2's `LayoutSignals` (multi-column, tables, images,
-   repeating header/footer) plus parsing-simulation checks (name/contact/section/date detection)
-3. Keyword coverage, action-verb detection, quantification detection — deterministic, Layer 1
-4. Explainable scoring engine: configurable weights, per-component evidence, no bare numbers
-5. First frontend surface for the document pipeline: an upload UI in the workspace, natural to add
-   once there is a real analysis result to show — deferred from Phase 2, which was backend-only by
-   design (uploading with nothing to show for it is a worse experience than not offering it yet)
-6. Tests: scoring unit tests against fixtures with known expected bands, explainability tests
-   (every score traces to evidence), API and privacy tests for the new endpoints
+1. Job description upload/paste and parsing: title, required/preferred/optional requirement
+   split, experience/education thresholds, certifications, responsibilities, soft skills — each
+   requirement keeping its source span
+2. Deterministic resume↔JD matching: exact/alias skill matching, experience and education
+   threshold checks
+3. Semantic layer: local ONNX embeddings (fastembed, ADR-0005) for skill/requirement similarity —
+   the first component that can actually be unavailable, exercising the degrade/renormalise path
+   Phase 3 built but never triggered
+4. Skill gap analysis: Strong / Moderate / Missing / Insufficient-evidence buckets tied to the
+   target role
+5. Extend the scoring engine's `ScoringProfile` mechanism (already generic) with the match
+   profile from ARCHITECTURE.md section 7
+6. Frontend: JD input, match score display, skill gap view
+7. Tests: JD parsing fixtures, matching unit tests, embedding-unavailable degradation tests, API
+   and privacy tests
 
 ## Planned
 
 | Phase | Scope |
 |---|---|
-| 4 | Job intelligence: JD parsing, requirement extraction, matching, semantic layer, skill gaps |
 | 5 | Resume builder: editor, templates, live preview, AI writing, tailoring, versions, PDF/DOCX export |
 | 6 | Career intelligence: cover letters, interview prep, learning priorities |
 | 7 | Recruiter screening: bulk async pipeline, extraction, ranking, comparison, shortlist, export |
@@ -192,7 +244,7 @@ No Docker, no Redis, no database and no API key is needed to run any of the abov
 |---|---|---|
 | Redis not installed | Redis backend unexercised locally | 10 conformance tests skip with a clear reason; run them with `TEST_REDIS_URL` set. Memory backend covers development |
 | Tesseract not installed | Scanned/image-only PDFs fail with `422 NO_EXTRACTABLE_TEXT` | Provider abstraction built in Phase 2 (`app.documents.extract.ocr`); feature-detected and reported false by `/ready`, honest error rather than silent failure or fake text |
-| No LLM/embedding key | Layer 3 features cannot run | `/ready` reports `llm: false`; Phases 1–4 do not need it |
+| No LLM key | Layer 3 (AI writing, cover letters, interview prep) cannot run | `/ready` reports `llm: false`; not needed until Phase 5–6. Phase 4's semantic matching needs no key — ADR-0005 chose local ONNX embeddings specifically so this stays true |
 | Playwright not installed | PDF export unavailable | Phase 5 concern; `/ready` reports `pdf_export: false` |
 | No CI pipeline yet | Gates run locally only | Phase 9 |
 

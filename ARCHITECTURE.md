@@ -59,7 +59,9 @@ backend/
     documents/     upload.py tempfile_scope.py sections.py structure.py
                    extract/{base,pdf,docx,txt,ocr}.py
     resume/        models.py provenance.py
-    [analysis/      ats.py formatting.py content.py keywords.py readability.py health.py]
+    analysis/       ats.py formatting.py content_quality.py skills_coverage.py
+                   experience_quality.py impact.py engine.py config.py
+                   models.py taxonomy.py text_metrics.py scoring_utils.py
     [jobs/          parse.py requirements.py]
     [matching/      deterministic.py semantic.py gaps.py engine.py]
     [scoring/       config.py engine.py explain.py]
@@ -75,10 +77,14 @@ docs/adr/
 ```
 
 Bracketed paths are planned, not yet built — see PROJECT_STATUS.md for what phase adds each one.
-`documents/` and `resume/` now hold real Phase 2 code: upload validation and bounded temp storage,
+`documents/` and `resume/` hold Phase 2 code: upload validation and bounded temp storage,
 per-format extraction (PDF via pdfplumber, DOCX via python-docx + defusedxml, TXT), deterministic
-section detection, and the provenance-tagged structured-resume builder. Rule: no source file over
-~400 lines. A module that outgrows it is split by responsibility.
+section detection, and the provenance-tagged structured-resume builder. `analysis/` holds Phase 3:
+six independently-scored components (`ats.py`, `content_quality.py`, `experience_quality.py`,
+`skills_coverage.py`, `formatting.py`, `impact.py`) sharing `text_metrics.py` (bullet/verb/
+quantification detection) and `taxonomy.py` (curated word lists), orchestrated by `engine.py`
+against the weights in `config.py`. Rule: no source file over ~400 lines. A module that outgrows
+it is split by responsibility.
 
 ## 4. Session model
 
@@ -137,10 +143,13 @@ Session end = every candidate's data destroyed with the namespace
 
 ## 7. Scoring engine
 
-Configuration-driven; weights never hardcoded at call sites.
+Configuration-driven; weights never hardcoded at call sites. Built in Phase 3 for resume health
+(`app/analysis/config.py`: `ats_compatibility`, `content_quality`, `experience_quality`,
+`skills_coverage`, `formatting`, `impact` — weights sum to 1.0, validated at construction) and
+reused unchanged for job matching in Phase 4:
 
 ```yaml
-match_profile_default:
+match_profile_default:  # Phase 4 - not yet built
   required_skills:    0.40
   preferred_skills:   0.15
   experience:         0.20

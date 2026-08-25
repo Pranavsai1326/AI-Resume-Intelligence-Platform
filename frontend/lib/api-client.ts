@@ -83,6 +83,64 @@ export interface ReadyInfo {
   capabilities: Record<string, boolean>;
 }
 
+export type DocumentKind = "pdf" | "docx" | "txt";
+
+export interface LayoutSignals {
+  page_count: number | null;
+  multi_column: boolean;
+  has_tables: boolean;
+  has_images: boolean;
+  has_text_boxes: boolean;
+  has_repeating_header_footer: boolean;
+}
+
+export interface ResumeSummary {
+  has_name: boolean;
+  has_email: boolean;
+  has_phone: boolean;
+  has_summary: boolean;
+  experience_entries: number;
+  education_entries: number;
+  skill_groups: number;
+  project_entries: number;
+  certification_entries: number;
+  custom_sections: number;
+}
+
+export interface DocumentUploadResponse {
+  document_id: string;
+  kind: DocumentKind;
+  layout: LayoutSignals;
+  ocr_used: boolean;
+  text_length: number;
+  resume_summary: ResumeSummary | null;
+  cached: boolean;
+}
+
+export type EvidenceSeverity = "positive" | "info" | "warning";
+
+export interface Evidence {
+  message: string;
+  severity: EvidenceSeverity;
+}
+
+export interface ComponentScore {
+  key: string;
+  label: string;
+  score: number;
+  weight: number;
+  available: boolean;
+  evidence: Evidence[];
+  explanation: string;
+}
+
+export interface ResumeHealthResult {
+  overall: number;
+  components: Record<string, ComponentScore>;
+  degraded: string[];
+  methodology: Record<string, string>;
+}
+
 interface RequestOptions {
   method?: string;
   body?: unknown;
@@ -148,6 +206,40 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return (await response.json()) as T;
 }
 
+/**
+ * Multipart upload. Deliberately bypasses `apiRequest`: a file upload must not set
+ * `Content-Type` itself (the browser sets it, including the multipart boundary) and must send a
+ * `FormData` body rather than JSON.
+ */
+async function uploadDocument(
+  file: File,
+  kind: "resume" | "job_description",
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<DocumentUploadResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("kind", kind);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/v1/documents`, {
+      method: "POST",
+      headers: { "X-Session-Id": sessionId },
+      body: form,
+      signal,
+      credentials: "omit",
+      cache: "no-store",
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw NETWORK_ERROR;
+  }
+
+  if (!response.ok) throw await toApiError(response);
+  return (await response.json()) as DocumentUploadResponse;
+}
+
 export const api = {
   createSession: (mode: SessionMode, signal?: AbortSignal) =>
     apiRequest<SessionInfo>("/v1/session", { method: "POST", body: { mode }, signal }),
@@ -162,6 +254,19 @@ export const api = {
     apiRequest<void>("/v1/session", { method: "DELETE", sessionId }),
 
   ready: (signal?: AbortSignal) => apiRequest<ReadyInfo>("/ready", { signal }),
+
+  uploadDocument,
+
+  analyzeResume: (documentId: string, sessionId: string, signal?: AbortSignal) =>
+    apiRequest<ResumeHealthResult>("/v1/analysis/resume", {
+      method: "POST",
+      body: { document_id: documentId },
+      sessionId,
+      signal,
+    }),
+
+  deleteDocument: (documentId: string, sessionId: string) =>
+    apiRequest<void>(`/v1/documents/${documentId}`, { method: "DELETE", sessionId }),
 };
 
 /**

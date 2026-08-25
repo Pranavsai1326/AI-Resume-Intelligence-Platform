@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { AlertCircle, FileUp, Loader2, Search, Sparkles, Users } from "lucide-react";
+import { AlertCircle, Loader2, Search, Sparkles, Users } from "lucide-react";
 
+import { ResumeAnalyzer } from "@/components/analysis/resume-analyzer";
 import { AppShell } from "@/components/layout/app-shell";
 import { useSessionActions } from "@/components/session/session-provider";
 import { Alert, AlertTitle } from "@/components/ui/alert";
@@ -16,9 +17,10 @@ import { useSessionStore } from "@/stores/session-store";
 /*
   Workspace.
 
-  Phase 1 delivers the session foundation, so the module list below shows honest availability
-  rather than buttons that lead nowhere. A module appears as available only when its backend
-  exists (RULE 8: no fake functionality).
+  The module list shows honest availability rather than buttons that lead nowhere - a module
+  appears as available only when its backend exists (RULE 8: no fake functionality). Upload and
+  analysis (Phases 2-3) are real; they render as the interactive flow above the list rather than
+  as another "not built yet" card.
 */
 
 interface ModuleCard {
@@ -31,22 +33,6 @@ interface ModuleCard {
 }
 
 const CANDIDATE_MODULES: ModuleCard[] = [
-  {
-    key: "upload",
-    title: "Resume upload and parsing",
-    description: "PDF, DOCX and TXT extraction into a structured resume with field provenance.",
-    icon: FileUp,
-    phase: "Phase 2",
-    available: false,
-  },
-  {
-    key: "analyze",
-    title: "Resume analyzer",
-    description: "ATS compatibility, formatting, content quality and impact — each score explained.",
-    icon: Search,
-    phase: "Phase 3",
-    available: false,
-  },
   {
     key: "match",
     title: "Job matching and tailoring",
@@ -182,16 +168,31 @@ export default function WorkspacePage() {
         </div>
 
         <Alert>
-          <AlertTitle>Phase 1 of the build is live</AlertTitle>
+          <AlertTitle>Phase 3 of the build is live</AlertTitle>
           <p className="text-ink-muted">
-            The session foundation works end to end. The modules below are listed with their real
-            status — none of them will show you a fabricated result before it is built.
+            Upload and resume analysis work end to end below. Anything not built yet is listed
+            honestly with its real status — none of it will show you a fabricated result.
           </p>
         </Alert>
 
+        {info.mode === "candidate" ? (
+          <section aria-labelledby="analyzer-heading">
+            <h2 id="analyzer-heading" className="text-lg font-semibold text-ink">
+              Analyze your resume
+            </h2>
+            <p className="mt-2 text-sm text-ink-muted">
+              Upload a resume to see how it reads to an ATS parser and a human reviewer, with
+              every score explained.
+            </p>
+            <div className="mt-4">
+              <ResumeAnalyzer sessionId={info.session_id} />
+            </div>
+          </section>
+        ) : null}
+
         <section aria-labelledby="modules-heading">
           <h2 id="modules-heading" className="text-lg font-semibold text-ink">
-            Modules
+            {info.mode === "candidate" ? "More modules" : "Modules"}
           </h2>
           <div className="mt-4 grid gap-5 md:grid-cols-3">
             {modules.map((module) => (

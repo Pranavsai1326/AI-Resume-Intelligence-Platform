@@ -126,12 +126,52 @@ Versions exist only inside the session and disappear with it.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/analysis/resume` | Full resume health: six sub-scores, each with inputs, weights, evidence and recommendations. |
-| `POST` | `/v1/analysis/ats` | ATS compatibility: parsing simulation (name/contact/sections/dates/titles/skills), formatting risks (multi-column, tables, text boxes, images, header/footer content, glyph issues), actionable fixes. |
-| `GET` | `/v1/analysis/{analysis_id}` | Retrieve a completed analysis from this session. |
+| `POST` | `/v1/analysis/resume` | Body `{"document_id": "..."}`. Full resume health for a previously uploaded document: six sub-scores, each with inputs, weight, evidence and explanation. |
+| `GET` | `/v1/analysis/{analysis_id}` | Retrieve a previously computed analysis. `analysis_id` is the document's id. |
 
-Every score response carries `components[]` with `{key, score, weight, evidence[], explanation}` and
-a `methodology` block. No endpoint returns a bare number.
+Analysis is compute-once, mirroring document upload: re-requesting analysis of the same
+`document_id` in the same session returns the cached result rather than re-scoring
+(AI_ARCHITECTURE.md section 6). ATS compatibility is one of the six components below rather than
+a separate endpoint — there proved to be no reason to compute it independently, since it needs
+exactly the same structured resume and layout signals as the other five.
+
+`POST /v1/analysis/resume` response:
+
+```json
+{
+  "overall": 90.0,
+  "components": {
+    "ats_compatibility": {
+      "key": "ats_compatibility", "label": "ATS Compatibility", "score": 100.0, "weight": 0.2,
+      "available": true,
+      "evidence": [
+        {"message": "A name was detected.", "severity": "positive"},
+        {"message": "No common ATS formatting risks (columns, tables, images, text boxes) were detected.", "severity": "positive"}
+      ],
+      "explanation": "Simulates how an automated resume parser would read this document: whether contact details, work history and dates are detectable, and whether the layout is likely to confuse a parser."
+    },
+    "content_quality": { "...": "same shape" },
+    "experience_quality": { "...": "same shape" },
+    "skills_coverage": { "...": "same shape" },
+    "formatting": { "...": "same shape" },
+    "impact": { "...": "same shape" }
+  },
+  "degraded": [],
+  "methodology": {"profile": "default", "version": "1.0.0"}
+}
+```
+
+`evidence[].severity` is `"positive"`, `"info"`, or `"warning"` — every component always returns
+at least one item, so a strong resume is told what it does well, not just given a passing number.
+`degraded` lists any component that could not be computed (excluded from `overall`, remaining
+weights renormalised) — always empty in Phase 3, since every component here is fully
+deterministic and needs no external dependency (AI_ARCHITECTURE.md section 1); a future
+component that does need one (e.g. semantic relevance, needing embeddings) degrades the same way
+rather than as a special case. No response ever returns a bare number without `evidence` and
+`explanation` attached.
+
+Analyzing a document uploaded with `kind=job_description` (no structured resume) returns
+`422 VALIDATION_FAILED`.
 
 ## Job descriptions
 

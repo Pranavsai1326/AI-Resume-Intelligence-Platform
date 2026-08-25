@@ -16,10 +16,10 @@ cleanup, authoritative TTL expiry, a periodic janitor sweep, and a startup sweep
 
 ## Status
 
-**Phase 2 complete** — on top of the Phase 1 session foundation, resumes can now be uploaded
-(PDF/DOCX/TXT), validated against hostile input, extracted, and turned into a structured,
-provenance-tagged resume — all deterministic (no LLM), all session-scoped, all gone when the
-session ends. Phase 3 (resume analyzer) is next.
+**Phase 3 complete** — a resume can now be uploaded and analyzed end to end, in the browser: six
+explainable health scores (ATS compatibility, content quality, experience quality, skills
+coverage, formatting, impact), every one backed by concrete evidence, computed entirely
+deterministically (no LLM, no external dependency). Phase 4 (job matching) is next.
 See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Running it locally
