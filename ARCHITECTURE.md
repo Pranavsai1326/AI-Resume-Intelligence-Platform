@@ -52,28 +52,33 @@ See [ADR-0003](docs/adr/0003-no-application-database.md).
 backend/
   app/
     main.py  config.py  logging.py
-    api/v1/        session documents resume analysis jobs match tailor letters
-                   interview screening export health
-    core/          errors middleware ratelimit security deps
-    sessions/      store.py memory.py redis.py models.py janitor.py
-    documents/     upload.py layout.py sections.py extract/{pdf,docx,txt,ocr}.py
-    resume/        models.py provenance.py structure.py normalize.py
-    analysis/      ats.py formatting.py content.py keywords.py readability.py health.py
-    jobs/          parse.py requirements.py
-    matching/      deterministic.py semantic.py gaps.py engine.py
-    scoring/       config.py engine.py explain.py
-    ai/            service.py prompts/ providers/ embeddings/ guards/
-    screening/     pipeline.py redact.py rank.py compare.py
-    queue/         base.py inprocess.py arq_queue.py
-    export/        pdf.py docx.py reports.py templates/
-    taxonomy/      skills.py data/
-  tests/           unit/ integration/ privacy/ e2e/
+    api/v1/        session documents [resume analysis jobs match tailor letters
+                   interview screening export] health
+    core/          errors middleware ratelimit clock deps
+    sessions/      store.py memory.py redis_store.py manager.py models.py janitor.py
+    documents/     upload.py tempfile_scope.py sections.py structure.py
+                   extract/{base,pdf,docx,txt,ocr}.py
+    resume/        models.py provenance.py
+    [analysis/      ats.py formatting.py content.py keywords.py readability.py health.py]
+    [jobs/          parse.py requirements.py]
+    [matching/      deterministic.py semantic.py gaps.py engine.py]
+    [scoring/       config.py engine.py explain.py]
+    [ai/            service.py prompts/ providers/ embeddings/ guards/]
+    [screening/     pipeline.py redact.py rank.py compare.py]
+    [queue/         base.py inprocess.py arq_queue.py]
+    [export/        pdf.py docx.py reports.py templates/]
+    [taxonomy/      skills.py data/]
+  tests/           unit/ integration/ privacy/ e2e/  fixtures.py
 frontend/
   app/  components/  lib/  stores/  hooks/  tests/
 docs/adr/
 ```
 
-Rule: no source file over ~400 lines. A module that outgrows it is split by responsibility.
+Bracketed paths are planned, not yet built — see PROJECT_STATUS.md for what phase adds each one.
+`documents/` and `resume/` now hold real Phase 2 code: upload validation and bounded temp storage,
+per-format extraction (PDF via pdfplumber, DOCX via python-docx + defusedxml, TXT), deterministic
+section detection, and the provenance-tagged structured-resume builder. Rule: no source file over
+~400 lines. A module that outgrows it is split by responsibility.
 
 ## 4. Session model
 

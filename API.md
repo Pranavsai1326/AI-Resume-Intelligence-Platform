@@ -58,12 +58,56 @@ nothing outlives its session.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/documents` | Upload one PDF/DOCX/TXT (`file`, `kind=resume\|job_description`). Validates, extracts, structures. Returns `document_id`, extraction confidence, layout signals, and `ocr_used`. |
-| `GET` | `/v1/documents/{id}` | Extraction result and structured output for a document in this session. |
-| `DELETE` | `/v1/documents/{id}` | Remove a document and everything derived from it. |
+| `POST` | `/v1/documents` | Multipart upload: `file` + `kind` (`resume` default, or `job_description`). Validates, extracts, and — for `kind=resume` — structures. Returns a summary; fetch the full structured resume via GET. |
+| `GET` | `/v1/documents/{id}` | Full extraction result and structured resume for a document in this session. |
+| `DELETE` | `/v1/documents/{id}` | Remove a document and everything derived from it. Idempotent, always `204`. |
 
-Limits: `MAX_UPLOAD_BYTES` (default 10 MB), `MAX_PDF_PAGES` (default 20), MIME verified by magic
-bytes, DOCX decompression bounded.
+Type is determined by magic-byte sniffing, never by the client's `Content-Type` or filename.
+Limits: `MAX_UPLOAD_BYTES` (default 10 MB, enforced streaming — an oversized upload is aborted
+mid-transfer, never fully buffered), `MAX_PDF_PAGES` (default 20), DOCX zip structure bounded
+(≤2,000 entries, ≤200 MB uncompressed, per-entry compression ratio capped) before any XML parser
+opens it. Re-uploading identical bytes within the same session is a cache hit (`cached: true`) —
+nothing is re-parsed or re-structured (AI_ARCHITECTURE.md section 6). Uploads are rate-limited per
+session (`RATE_LIMIT_UPLOADS_PER_HOUR`, default 120/hour).
+
+`kind=job_description` runs extraction only — no structured resume is produced, since requirement
+extraction is Phase 4 work; `resume_summary` is `null` in that response rather than a fabricated
+empty structure.
+
+`POST /v1/documents` response:
+
+```json
+{
+  "document_id": "18c8897582505bf185fcce96",
+  "kind": "pdf",
+  "layout": {
+    "page_count": 1,
+    "multi_column": false,
+    "has_tables": false,
+    "has_images": false,
+    "has_text_boxes": false,
+    "has_repeating_header_footer": false
+  },
+  "ocr_used": false,
+  "text_length": 1204,
+  "resume_summary": {
+    "has_name": true, "has_email": true, "has_phone": true, "has_summary": true,
+    "experience_entries": 2, "education_entries": 1, "skill_groups": 2,
+    "project_entries": 1, "certification_entries": 1, "custom_sections": 1
+  },
+  "cached": false
+}
+```
+
+`GET /v1/documents/{id}` additionally returns `text` (the full extracted plain text) and
+`resume` — the structured `Resume` object, where every populated field is
+`{"value": ..., "provenance": {"kind": "extracted", "confidence": 0.0-1.0, "source": null}}`
+(AI_ARCHITECTURE.md section 5). No document has been parsed by an LLM: `provenance.kind` is
+always `"extracted"` at this stage.
+
+When a document has no extractable text (e.g. a scanned image saved as PDF) and OCR is not
+configured on this deployment, the request fails with `422 NO_EXTRACTABLE_TEXT` — never an empty
+or fabricated resume.
 
 ## Resume
 

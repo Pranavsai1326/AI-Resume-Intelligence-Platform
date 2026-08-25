@@ -114,6 +114,18 @@ class SessionManager:
             await self._reset_object_ttls(updated, now)
         return updated
 
+    async def increment_counter(self, meta: SessionMeta, field: str, by: int = 1) -> SessionMeta:
+        """Bump an operational counter and persist it.
+
+        Counters are numbers only - never content - so incrementing one is not a privacy-
+        sensitive write, just session bookkeeping (documents processed, AI calls made).
+        """
+        current = getattr(meta.counters, field)
+        updated_counters = meta.counters.model_copy(update={field: current + by})
+        updated = meta.model_copy(update={"counters": updated_counters})
+        await self._persist(updated, self._clock.now())
+        return updated
+
     async def release(self, session_id: str) -> bool:
         """Collapse a session to a short grace window because its page went away.
 

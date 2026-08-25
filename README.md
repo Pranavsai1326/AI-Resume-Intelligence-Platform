@@ -16,10 +16,10 @@ cleanup, authoritative TTL expiry, a periodic janitor sweep, and a startup sweep
 
 ## Status
 
-**Phase 1 complete** — the ephemeral session foundation is built, tested and running: session
-lifecycle with sliding and absolute TTLs, two interchangeable store backends, four-layer cleanup,
-redacting logs, sanitised errors, rate limiting, health probes, and a Next.js shell with a
-privacy-first landing page. Phase 2 (document processing) is next.
+**Phase 2 complete** — on top of the Phase 1 session foundation, resumes can now be uploaded
+(PDF/DOCX/TXT), validated against hostile input, extracted, and turned into a structured,
+provenance-tagged resume — all deterministic (no LLM), all session-scoped, all gone when the
+session ends. Phase 3 (resume analyzer) is next.
 See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Running it locally

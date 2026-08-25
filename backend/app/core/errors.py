@@ -123,3 +123,81 @@ class AIUnavailableError(ServiceUnavailableError):
 class StorageUnavailableError(ServiceUnavailableError):
     code = "STORAGE_UNAVAILABLE"
     message = "The session store is unreachable. Please try again shortly."
+
+
+# -- Document processing (Phase 2) --------------------------------------------------------------
+# Uploaded files are hostile input until proven otherwise (SECURITY.md section 2). Each of these
+# maps one validation or extraction failure to a message that names the problem without ever
+# reflecting file content, a path, or a library's internal error text back to the client.
+
+
+class EmptyFileError(ValidationFailedError):
+    code = "EMPTY_FILE"
+    message = "The uploaded file is empty."
+
+
+class FileTooLargeError(ValidationFailedError):
+    code = "FILE_TOO_LARGE"
+
+    def __init__(self, max_bytes: int) -> None:
+        super().__init__(
+            f"The file exceeds the {max_bytes // (1024 * 1024)} MB limit.",
+            details={"max_bytes": max_bytes},
+        )
+
+
+class UnsupportedFileTypeError(ValidationFailedError):
+    code = "UNSUPPORTED_FILE_TYPE"
+    message = "Only PDF, DOCX and TXT files are supported."
+
+
+class TooManyPagesError(ValidationFailedError):
+    code = "TOO_MANY_PAGES"
+
+    def __init__(self, max_pages: int) -> None:
+        super().__init__(
+            f"The document exceeds the {max_pages}-page limit.",
+            details={"max_pages": max_pages},
+        )
+
+
+class DocumentStructureError(ValidationFailedError):
+    """Structural limits: decompression ratio, entry count, archive nesting.
+
+    Named separately from a generic corrupt-file error because this one is a defence
+    (zip-bomb / entity-expansion protection), not a parse failure - see SECURITY.md section 2.
+    """
+
+    code = "DOCUMENT_STRUCTURE_REJECTED"
+    message = "The document's internal structure could not be safely processed."
+
+
+class CorruptDocumentError(ValidationFailedError):
+    code = "CORRUPT_DOCUMENT"
+    message = "The file could not be read. It may be corrupted or not a valid document."
+
+
+class PasswordProtectedDocumentError(ValidationFailedError):
+    code = "PASSWORD_PROTECTED"
+    message = "This document is password-protected and cannot be processed."
+
+
+class NoExtractableTextError(ValidationFailedError):
+    """The document has no text layer and OCR is unavailable or disabled.
+
+    Distinguished from :class:`CorruptDocumentError`: the file is valid, it simply contains no
+    text this pipeline can read without OCR (e.g. a scanned image saved as PDF).
+    """
+
+    code = "NO_EXTRACTABLE_TEXT"
+    message = (
+        "This file has no extractable text, and OCR is not available on this deployment."
+    )
+
+
+class DocumentProcessingTimeoutError(AppError):
+    code = "DOCUMENT_PROCESSING_TIMEOUT"
+    category = ErrorCategory.TIMEOUT
+    status_code = 504
+    retryable = True
+    message = "Processing this document took too long and was cancelled."

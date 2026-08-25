@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_session_create_per_hour: int = Field(default=30, ge=1)
     rate_limit_requests_per_minute: int = Field(default=120, ge=1)
+    rate_limit_uploads_per_hour: int = Field(default=120, ge=1)
 
     # -- Uploads (Phase 2) ---------------------------------------------------------------
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, ge=1024)

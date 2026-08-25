@@ -10,12 +10,19 @@ dependencies = [
     "pydantic-settings>=2.7",
     "structlog>=24.4",
     "python-multipart>=0.0.20",
+    "pdfplumber>=0.11",
+    "pypdf>=6.0",
+    "python-docx>=1.1",
+    "defusedxml>=0.7",
+    "chardet>=5.2",
 ]
 
 [project.optional-dependencies]
 redis = ["redis>=5.2"]
 dev = [
     "pytest>=8.3",
+    "reportlab>=4.2",  # test fixture generation only - never a runtime dependency
+    "types-defusedxml>=0.7",
     "pytest-asyncio>=0.25",
     "httpx>=0.28",
     "ruff>=0.9",
@@ -44,10 +51,20 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "S", "ASYNC", "RUF"]
-ignore = ["S101"]
+ignore = [
+    "S101",
+    # Resume text and date-range parsing deliberately matches Unicode en/em dashes ("2020 – 2021")
+    # alongside the hyphen - these are not accidental confusable characters.
+    "RUF001",
+    # Kept as classic typing.Generic[T] rather than PEP 695 syntax for Pydantic v2 compatibility.
+    "UP046",
+]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S105", "S106", "S311"]
+# File()/Form()/Depends() as argument defaults is the FastAPI-idiomatic dependency-injection
+# pattern, not the mutable-default-argument bug B008 otherwise warns about.
+"app/api/v1/*.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.13"

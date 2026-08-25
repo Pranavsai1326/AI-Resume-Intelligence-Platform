@@ -135,6 +135,9 @@ These are product requirements, not optional extras:
 10. Job queue entries for an expired session are cancelled and their inputs dropped.
 11. A released session, and every object beneath it, expires within the grace window with no
     further client contact.
+12. An uploaded resume's content never reaches durable storage, is destroyed with its session,
+    never appears in logs (including the original filename), and one session cannot fetch
+    another's uploaded document (`backend/tests/privacy/test_document_privacy.py`).
 
 ## 11. What we tell users — and what we refuse to claim
 

@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-22 · **Current phase:** Phase 1 complete → Phase 2 ready to start
+**Last updated:** 2026-08-25 · **Current phase:** Phase 2 complete → Phase 3 ready to start
 
 > Read this file first in every session, then only the architecture docs relevant to the task.
 > Update it after every meaningful implementation change.
@@ -76,30 +76,79 @@ with its full TTL restored; a tab that is really gone is cleaned up in minutes r
 The explicit "End session" control still destroys immediately. Documented in
 [API.md](API.md), [ARCHITECTURE.md](ARCHITECTURE.md) §4 and [PRIVACY_ARCHITECTURE.md](PRIVACY_ARCHITECTURE.md) §3.
 
+### Phase 2 — Document processing
+
+**Backend** (`backend/app/documents/`, `backend/app/resume/`)
+
+| Area | Delivered |
+|---|---|
+| Upload validation | Magic-byte type sniffing (PDF/DOCX/TXT), independent of client `Content-Type` or filename; streaming size enforcement that aborts mid-transfer; DOCX zip-bomb defence (entry count, uncompressed-size, per-entry compression-ratio bounds) checked before any XML parser opens the file |
+| Temp storage | `SpooledTemporaryFile`-backed bounded buffer; touches disk only past 2 MB, and only inside the session's controlled, janitor-swept temp dir; deleted in `finally` on every path including exceptions |
+| PDF extraction | pdfplumber (ADR-0004): text, page count/limit, encryption rejection via pypdf pre-check, and layout heuristics computed from real word geometry — multi-column detection, table detection, image detection, repeating header/footer detection |
+| DOCX extraction | python-docx for structural text (paragraphs + tables in document order); `defusedxml` used separately for the security-sensitive raw-XML pass (column count, text-box markers) rather than trusting any one parser |
+| TXT extraction | Encoding detection with UTF-8 preference, never raises on odd encodings |
+| OCR | Provider abstraction (`OcrProvider` protocol) wired to `NullOcrProvider`; Tesseract is not installed in this environment, so OCR is honestly reported unavailable rather than faked — a document with no extractable text and no OCR fails with `422 NO_EXTRACTABLE_TEXT` |
+| Section detection | Deterministic heuristics: canonical keyword table (any casing) plus a narrow ALL-CAPS fallback for unrecognised headers like "Awards" |
+| Structure builder | Provenance-tagged `Resume` model (contact, summary, experience, education, skills, projects, certifications, custom sections); every populated field carries `ProvenanceKind.EXTRACTED` with a confidence calibrated to how mechanical its parsing was; date-range parsing that never pads a bare year into a fabricated month |
+| API | `POST/GET/DELETE /v1/documents{,/{id}}`; content-hash cache (re-uploading identical bytes is a cache hit, no re-extraction); per-session upload rate limit; session document counter |
+
+**Verification** — all green:
+
+```
+backend   230 passed, 10 skipped (Redis, no server present)   ruff clean   mypy --strict clean
+```
+
+Also smoke-tested against a running server outside the test harness: upload → get → cache-hit
+re-upload → delete, all over real HTTP.
+
+### Defects found and fixed during Phase 2
+
+Development followed a build-then-verify-against-real-input loop; every one of these was caught by
+running the pipeline against synthetic fixtures, not assumed correct from reading the code:
+
+1. **The generic "looks like a header" fallback was far too permissive.** It matched ordinary
+   title-case content lines — a person's name, a job-title line — as section headers, which
+   fragmented the contact block and corrupted experience-entry extraction. Narrowed to known
+   keywords (any casing) plus ALL-CAPS only; a title-case custom header that isn't in the keyword
+   table is now missed rather than corrupting what surrounds it — a safe failure mode.
+2. **Dates on their own line weren't captured.** A common resume layout ("Title, Org" on one line,
+   "Jan 2021 - Present" on the next) has no date on the header line itself; the parser only checked
+   the header. Fixed by checking whether the *next* line is essentially just a date range.
+3. **Certification lines separated by a plain hyphen didn't split into name/issuer.** The splitter
+   recognised `|`, `,`, en-dash and em-dash but not a bare `-` surrounded by spaces.
+4. **PDF text extraction collapses blank lines between visually separated entries** (a structural
+   property of `pdfplumber`, not a bug in it), which silently broke blank-line-based splitting of
+   multi-entry sections. Added a fallback: when blank-line splitting yields a single block, a
+   non-bulleted line following at least one bulleted line is treated as the start of a new entry.
+5. **Rate limiting read the process-global `Settings`** in one code path inherited from Phase 1's
+   pattern rather than the request-scoped instance — carried the Phase 1 fix forward correctly on
+   review rather than reintroducing it.
+
+Each of these is now a named regression test (`tests/unit/test_sections.py`,
+`tests/unit/test_structure.py`) so the specific input that broke it stays covered.
+
 ## In progress
 
-Nothing. Phase 1 is committed.
+Nothing. Phase 2 is committed.
 
-## Next task — Phase 2 (document processing)
+## Next task — Phase 3 (resume analyzer)
 
-1. Upload endpoint with streaming size enforcement, magic-byte type validation, PDF page limits and
-   DOCX decompression bounds
-2. Temp-file context manager that deletes in `finally`, including on exception and cancellation
-3. PDF extraction via pdfplumber with word-level geometry (feeds column/table detection later)
-4. DOCX extraction via python-docx + defusedxml, including header/footer and text-box detection
-5. TXT extraction with encoding detection
-6. OCR adapter behind an interface, feature-detected, with an honest unavailable state
-7. Section detection and the structured `Resume` model with per-field provenance and confidence
-8. Session-scoped storage of extracted artefacts, with the compute-once cache key
-9. Tests: parser unit tests over synthetic fixtures, upload validation and security tests
-   (oversized, MIME spoof, zip bomb, XXE, malformed PDF), and privacy tests proving temp files are
-   gone on every path
+1. Resume health score: six sub-scores (ATS compatibility, content quality, skills coverage,
+   experience quality, formatting, impact), each with inputs, weights and evidence exposed
+2. ATS compatibility analysis building on Phase 2's `LayoutSignals` (multi-column, tables, images,
+   repeating header/footer) plus parsing-simulation checks (name/contact/section/date detection)
+3. Keyword coverage, action-verb detection, quantification detection — deterministic, Layer 1
+4. Explainable scoring engine: configurable weights, per-component evidence, no bare numbers
+5. First frontend surface for the document pipeline: an upload UI in the workspace, natural to add
+   once there is a real analysis result to show — deferred from Phase 2, which was backend-only by
+   design (uploading with nothing to show for it is a worse experience than not offering it yet)
+6. Tests: scoring unit tests against fixtures with known expected bands, explainability tests
+   (every score traces to evidence), API and privacy tests for the new endpoints
 
 ## Planned
 
 | Phase | Scope |
 |---|---|
-| 3 | Resume analyzer: health scores, ATS compatibility, formatting, keywords, explainable scoring |
 | 4 | Job intelligence: JD parsing, requirement extraction, matching, semantic layer, skill gaps |
 | 5 | Resume builder: editor, templates, live preview, AI writing, tailoring, versions, PDF/DOCX export |
 | 6 | Career intelligence: cover letters, interview prep, learning priorities |
@@ -142,7 +191,7 @@ No Docker, no Redis, no database and no API key is needed to run any of the abov
 | Gap | Impact | Handling |
 |---|---|---|
 | Redis not installed | Redis backend unexercised locally | 10 conformance tests skip with a clear reason; run them with `TEST_REDIS_URL` set. Memory backend covers development |
-| Tesseract not installed | OCR cannot run | Phase 2 concern; feature-detected, reported false by `/ready`, honest error rather than silent failure |
+| Tesseract not installed | Scanned/image-only PDFs fail with `422 NO_EXTRACTABLE_TEXT` | Provider abstraction built in Phase 2 (`app.documents.extract.ocr`); feature-detected and reported false by `/ready`, honest error rather than silent failure or fake text |
 | No LLM/embedding key | Layer 3 features cannot run | `/ready` reports `llm: false`; Phases 1–4 do not need it |
 | Playwright not installed | PDF export unavailable | Phase 5 concern; `/ready` reports `pdf_export: false` |
 | No CI pipeline yet | Gates run locally only | Phase 9 |
