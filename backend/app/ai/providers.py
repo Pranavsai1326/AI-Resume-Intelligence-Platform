@@ -12,11 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from app.config import Settings
+from app.config import Settings, is_configured_api_key
 from app.logging import get_logger
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from anthropic import AsyncAnthropic
+    from google.genai import Client as GenAIClient
 
 logger = get_logger(__name__)
 
@@ -100,9 +101,75 @@ class AnthropicProvider:
         )
 
 
+class GeminiProvider:
+    """Real provider using Google's official GenAI SDK. Vendor SDK import confined here, same as
+    ``AnthropicProvider`` - features call through ``LLMProvider``, never this class or the SDK
+    directly (Feature -> LLMProvider -> GeminiProvider -> Gemini API, per Phase 9F's requirement).
+    """
+
+    __slots__ = ("_api_key", "_client", "_model", "_timeout_seconds")
+
+    def __init__(self, api_key: str, model: str, timeout_seconds: int) -> None:
+        self._api_key = api_key
+        self._model = model
+        self._timeout_seconds = timeout_seconds
+        self._client: GenAIClient | None = None
+
+    def _get_client(self) -> GenAIClient:
+        if self._client is None:
+            from google import genai
+            from google.genai import types
+
+            self._client = genai.Client(
+                api_key=self._api_key,
+                http_options=types.HttpOptions(timeout=self._timeout_seconds * 1000),
+            )
+        return self._client
+
+    def is_available(self) -> bool:
+        return is_configured_api_key(self._api_key)
+
+    async def complete(
+        self, *, system: str, user: str, max_tokens: int, temperature: float = 0.3
+    ) -> LLMResponse | None:
+        if not self.is_available():
+            return None
+        try:
+            from google.genai import types
+
+            client = self._get_client()
+            response = await client.aio.models.generate_content(
+                model=self._model,
+                contents=user,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    max_output_tokens=max_tokens,
+                    temperature=temperature,
+                ),
+            )
+        except Exception:
+            # Deliberately broad, matching AnthropicProvider: an invalid key, a rate limit, a
+            # timeout, or a network failure all resolve the same way from the caller's
+            # perspective - honest unavailability, never a fabricated response.
+            logger.warning("ai.completion_failed", model=self._model, provider="gemini")
+            return None
+
+        text = response.text or ""
+        usage = response.usage_metadata
+        return LLMResponse(
+            text=text,
+            input_tokens=getattr(usage, "prompt_token_count", None) if usage else None,
+            output_tokens=getattr(usage, "candidates_token_count", None) if usage else None,
+        )
+
+
 def get_llm_provider(settings: Settings) -> LLMProvider:
-    if settings.llm_provider == "anthropic" and settings.anthropic_api_key:
+    if settings.llm_provider == "anthropic" and is_configured_api_key(settings.anthropic_api_key):
         return AnthropicProvider(
             settings.anthropic_api_key, settings.llm_model_reasoning, settings.llm_timeout_seconds
+        )
+    if settings.llm_provider == "gemini" and is_configured_api_key(settings.gemini_api_key):
+        return GeminiProvider(
+            settings.gemini_api_key, settings.llm_model_gemini, settings.llm_timeout_seconds
         )
     return NullLLMProvider()

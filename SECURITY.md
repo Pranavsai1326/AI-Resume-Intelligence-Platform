@@ -76,11 +76,13 @@ noted - all confirmed real and tested (`backend/tests/integration/test_ai_export
 | Global request rate | configurable | per IP, `429` with `Retry-After` |
 
 Per-session token usage is tracked (`SessionCounters.ai_tokens`, visible via `GET /v1/session`)
-but **not yet enforced as a hard cap** - a session can still exceed a token budget as long as it
-stays under the call-count limit above. The counter exists for cost observability today;
-converting it into an actual enforced budget (reject once cumulative tokens cross a threshold) is
-tracked as a Phase 9 follow-up, not yet built. Limits are configuration, tuned before production
-launch.
+and, as of Phase 9G, enforced as a hard cap: `RATE_LIMIT_AI_TOKENS_PER_SESSION` (default 200,000)
+bounds cumulative spend across every AI feature for the session's lifetime, independent of the
+hourly call-count limit above - a handful of unusually large completions could previously stay
+under the call limit while still running up unbounded spend. Once the cap is reached, the
+affected endpoint returns `429 RATE_LIMITED`; the reset condition is a new session, not a sliding
+window, since the goal is a total-spend ceiling, not pacing (`app.core.ratelimit.
+enforce_session_ai_token_budget`). Limits are configuration, tuned before production launch.
 
 ## 5. HTTP hardening
 
@@ -125,10 +127,17 @@ launch.
   (`Settings.validate_runtime`: `LLM_PROVIDER=anthropic` without `ANTHROPIC_API_KEY` refuses to
   boot); a missing key in a non-production environment selects the Null provider (honest
   degradation) instead.
-* **Not yet built:** an automated secret-scanning pre-commit hook or CI check. Every commit in
-  this project has so far been manually reviewed for secrets before staging (an explicit step in
-  each phase's workflow) - real, but not the automated, always-on guarantee this line originally
-  implied. Tracked for Phase 9 alongside the CI pipeline itself.
+* **Not yet built:** an automated secret-scanning pre-commit hook or dedicated CI check (the CI
+  pipeline added in Phase 9I runs tests/lint/audits, not a secrets scan). Every commit in this
+  project has so far been manually reviewed for secrets before staging (an explicit step in each
+  phase's workflow) - real, but not the automated, always-on guarantee this line originally
+  implied. Tracked as a follow-up.
+* **Gemini** (Phase 9F, `app/ai/providers.py::GeminiProvider`) follows the same rule: `GEMINI_API_KEY`
+  from environment only, never hard-coded, never logged. A value matching a known placeholder
+  pattern (e.g. `.env.example`'s literal `YOUR_GEMINI_API_KEY_HERE`) is treated as "not configured"
+  rather than attempted as a real credential (`app.config.is_configured_api_key`) - copying the
+  example file verbatim into a real `.env` degrades to the honest unavailable state instead of a
+  confusing authentication failure.
 
 ## 8. Error handling
 
@@ -141,21 +150,19 @@ the client.
 ## 9. Dependency and supply-chain security
 
 * Frontend is pinned via `package-lock.json` - reproducible installs, confirmed real.
-* **Backend is not pinned to a lockfile** - `pyproject.toml` declares floating `>=` lower bounds
-  only (e.g. `fastapi>=0.115`), and no lockfile (`uv.lock`, `requirements.txt`, or equivalent)
-  exists in the repository. Reproducible backend installs currently depend on nobody having
-  upgraded a dependency between two `pip install`s - real drift risk, not yet closed. Fixing this
-  (adopting `uv` or pip-tools and committing a lockfile) is tracked for Phase 9.
-* **Automated auditing is not yet wired in** - there is no CI pipeline at all in this project so
-  far (PROJECT_STATUS.md's Known Issues), so neither `pip-audit` nor `npm audit` runs
-  automatically. Both were run manually against the current environment while writing this
-  section: `pip-audit` reported no known vulnerabilities in the backend's installed packages;
-  `npm audit --audit-level=high` reported 3 high-severity advisories, all in `next`'s transitive
-  `postcss`/`sharp` dependencies (XSS in PostCSS's CSS stringifier, a libvips CVE in `sharp`) -
-  see PROJECT_STATUS.md's Known Issues for why this wasn't force-upgraded on the spot. `pip-audit`
-  is now a declared dev dependency (`backend/pyproject.toml`'s `dev` extra) so re-running it is a
-  documented, intentional step rather than an ad-hoc local install; wiring both commands into an
-  actual CI gate is still Phase 9 work, alongside the CI pipeline itself.
+* **Backend is now pinned** via `backend/requirements-lock.txt` (Phase 9I) - a `pip freeze`
+  snapshot of a known-good environment, generated from `pyproject.toml`'s floating `>=` bounds.
+  `pyproject.toml` remains the source of truth for what a fresh contributor edits; the lockfile is
+  what CI and a "give me the exact versions that were tested" install use.
+* **CI now runs both audits automatically** (`.github/workflows/ci.yml`, Phase 9I): `pip-audit`
+  and `npm audit --audit-level=high` run on every push/PR, currently `continue-on-error` (advisory,
+  not yet a merge-blocking gate, since triaging a finding sometimes takes longer than a single PR).
+  As of this writing: `pip-audit` reports no known vulnerabilities in the backend's installed
+  packages; `npm audit --audit-level=high` reports 3 high-severity advisories, all in `next`'s
+  transitive `postcss`/`sharp` dependencies (XSS in PostCSS's CSS stringifier, a libvips CVE in
+  `sharp`), fixable only via a breaking `next` major-version bump - deliberately not force-upgraded
+  without a dedicated regression pass (see PROJECT_STATUS.md's Known Issues), tracked as an open
+  item rather than silently accepted.
 * Dependency additions are justified in review — every new parser is new attack surface.
 * Frontend has no CDN-loaded scripts; assets are self-hosted.
 * Container images (when introduced in Phase 9) run as a non-root user with a read-only root

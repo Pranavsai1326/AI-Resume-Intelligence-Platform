@@ -6,6 +6,7 @@ rejected at startup rather than degrading silently in production - see ``validat
 
 from __future__ import annotations
 
+import os
 import shutil
 from enum import StrEnum
 from functools import lru_cache
@@ -22,6 +23,30 @@ class AppEnv(StrEnum):
     PRODUCTION = "production"
 
 
+#: Values that mean "no real credential was ever supplied" even though the field isn't empty -
+#: chiefly `.env.example`'s literal `YOUR_GEMINI_API_KEY_HERE` placeholder, so copying the example
+#: file verbatim into a real `.env` degrades to the honest "unavailable" state (Phase 9F) rather
+#: than the provider attempting - and failing - a real request with a dummy string.
+_PLACEHOLDER_API_KEY_VALUES = frozenset(
+    {
+        "your_gemini_api_key_here",
+        "your-gemini-api-key-here",
+        "your_anthropic_api_key_here",
+        "your-anthropic-api-key-here",
+        "changeme",
+        "change_me",
+        "replace_me",
+        "placeholder",
+        "xxx",
+    }
+)
+
+
+def is_configured_api_key(value: str) -> bool:
+    """True only for a value that could plausibly be a real credential."""
+    return bool(value) and value.strip().lower() not in _PLACEHOLDER_API_KEY_VALUES
+
+
 class UnsafeConfigurationError(RuntimeError):
     """Raised when the configuration would be unsafe to run.
 
@@ -33,7 +58,12 @@ class UnsafeConfigurationError(RuntimeError):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env",),
+        # Under pytest (`PYTEST_VERSION` is set for the whole session, before collection even
+        # starts) tests must be hermetic and reproducible regardless of what a developer's local
+        # `.env` happens to contain - every test that cares about a setting passes it explicitly.
+        # Without this, a local `backend/.env` (e.g. one holding a real Gemini key for manual
+        # testing) would silently change default test behaviour depending on who ran the suite.
+        env_file=None if os.environ.get("PYTEST_VERSION") else (".env",),
         env_file_encoding="utf-8",
         extra="ignore",
         frozen=True,
@@ -72,6 +102,10 @@ class Settings(BaseSettings):
     #: Bounds provider spend per anonymous session (SECURITY.md section 4) - covers rewrite,
     #: tailoring's AI-assisted bullets, cover letters, and interview prep alike.
     rate_limit_ai_calls_per_hour: int = Field(default=100, ge=1)
+    #: Session-lifetime cap on total AI tokens spent (input + output, summed across every AI
+    #: feature) - bounds total spend even when every individual call stays under the hourly
+    #: ai_calls limit above. Phase 9G: closes the "tracked but not enforced" gap noted in Phase 8.
+    rate_limit_ai_tokens_per_session: int = Field(default=200_000, ge=1)
     #: PDF export launches a Chromium process per call - bounded independently of the general
     #: upload/AI limits so it cannot become its own resource-exhaustion vector.
     rate_limit_exports_per_hour: int = Field(default=60, ge=1)
@@ -83,10 +117,18 @@ class Settings(BaseSettings):
     temp_dir: str = ""
 
     # -- AI providers (Phases 4+) --------------------------------------------------------
-    llm_provider: Literal["null", "anthropic"] = "null"
+    llm_provider: Literal["null", "anthropic", "gemini"] = "null"
     anthropic_api_key: str = ""
     llm_model_reasoning: str = "claude-sonnet-5"
     llm_model_bulk: str = "claude-haiku-4-5-20251001"
+    #: Server-side only, never exposed to the frontend (AI_ARCHITECTURE.md section 2).
+    #: `.env.example` ships the literal placeholder `YOUR_GEMINI_API_KEY_HERE` - see
+    #: `is_configured_api_key` below, which is what keeps that placeholder from ever being
+    #: treated as a real credential.
+    gemini_api_key: str = ""
+    #: A current, low-cost/free-tier-friendly Gemini Flash model - configurable so a
+    #: deprecated or renamed model id never needs a code change to fix.
+    llm_model_gemini: str = "gemini-2.5-flash"
     llm_timeout_seconds: int = Field(default=60, ge=1)
     #: "fastembed" by default (ADR-0005: local ONNX, no API key, resume text stays server-side).
     #: Falls back honestly if the package or model cannot load - see
@@ -143,7 +185,10 @@ class Settings(BaseSettings):
         instead of offering them and failing, or worse, faking a result.
         """
         return {
-            "llm": self.llm_provider != "null" and bool(self.anthropic_api_key),
+            "llm": (
+                (self.llm_provider == "anthropic" and is_configured_api_key(self.anthropic_api_key))
+                or (self.llm_provider == "gemini" and is_configured_api_key(self.gemini_api_key))
+            ),
             "embeddings": self._embeddings_importable(),
             "ocr": self.ocr_enabled and self._tesseract_available(),
             "pdf_export": self._playwright_available(),
@@ -209,8 +254,15 @@ class Settings(BaseSettings):
                 )
             if self.log_format != "json":
                 problems.append("LOG_FORMAT must be json in production.")
-            if self.llm_provider == "anthropic" and not self.anthropic_api_key:
-                problems.append("LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY.")
+            anthropic_selected = self.llm_provider == "anthropic"
+            if anthropic_selected and not is_configured_api_key(self.anthropic_api_key):
+                problems.append(
+                    "LLM_PROVIDER=anthropic requires a real ANTHROPIC_API_KEY (not a placeholder)."
+                )
+            if self.llm_provider == "gemini" and not is_configured_api_key(self.gemini_api_key):
+                problems.append(
+                    "LLM_PROVIDER=gemini requires a real GEMINI_API_KEY (not a placeholder)."
+                )
 
         if problems:
             raise UnsafeConfigurationError(

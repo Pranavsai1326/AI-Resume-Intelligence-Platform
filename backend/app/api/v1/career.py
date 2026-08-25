@@ -16,7 +16,7 @@ from app.ai.interview import InterviewPrepProposal, generate_interview_questions
 from app.ai.providers import get_llm_provider
 from app.core.deps import ActiveSessionDep, RateLimiterDep, SessionManagerDep, SettingsDep
 from app.core.errors import NotFoundError
-from app.core.ratelimit import RateLimitRule
+from app.core.ratelimit import RateLimitRule, enforce_session_ai_token_budget
 from app.jobs.models import JobDescription
 from app.logging import get_logger
 from app.matching.embeddings import get_embedding_provider
@@ -64,6 +64,7 @@ async def cover_letter(
             RateLimitRule("ai_calls", settings.rate_limit_ai_calls_per_hour, 3600),
             session.session_id,
         )
+        enforce_session_ai_token_budget(session, settings.rate_limit_ai_tokens_per_session)
     proposal = await generate_cover_letter(version.resume, job, provider)
 
     if provider.is_available():
@@ -93,6 +94,7 @@ async def interview_questions(
             RateLimitRule("ai_calls", settings.rate_limit_ai_calls_per_hour, 3600),
             session.session_id,
         )
+        enforce_session_ai_token_budget(session, settings.rate_limit_ai_tokens_per_session)
     proposal = await generate_interview_questions(version.resume, job, provider)
 
     if provider.is_available():

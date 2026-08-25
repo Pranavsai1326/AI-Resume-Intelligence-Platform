@@ -14,6 +14,7 @@ import hashlib
 from dataclasses import dataclass
 
 from app.core.errors import RateLimitedError
+from app.sessions.models import SessionMeta
 from app.sessions.store import SessionStore
 
 
@@ -70,3 +71,16 @@ class RateLimiter:
         if not result.allowed:
             raise RateLimitedError(result.retry_after)
         return result
+
+
+def enforce_session_ai_token_budget(session: SessionMeta, limit: int) -> None:
+    """Session-lifetime AI token cap (Phase 9G), separate from the hourly ``ai_calls`` window
+    above: a handful of very large completions could stay under the call-count limit while still
+    running up unbounded spend. Unlike a sliding-window rate limit, there is no ``Retry-After``
+    that actually helps here - the budget resets only when the session itself ends - so the
+    header value is advisory rather than a real wait time.
+    """
+    if session.counters.ai_tokens >= limit:
+        raise RateLimitedError(
+            3600, "This session has reached its AI usage limit. Start a new session to continue."
+        )

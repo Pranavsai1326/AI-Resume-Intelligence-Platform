@@ -17,7 +17,7 @@ from app.ai.providers import get_llm_provider
 from app.ai.rewrite import RewriteProposal, rewrite_bullet, rewrite_summary
 from app.core.deps import ActiveSessionDep, RateLimiterDep, SessionManagerDep, SettingsDep
 from app.core.errors import NotFoundError
-from app.core.ratelimit import RateLimitRule
+from app.core.ratelimit import RateLimitRule, enforce_session_ai_token_budget
 from app.documents.storage import StoredDocument
 from app.logging import get_logger
 
@@ -44,6 +44,7 @@ async def rewrite(
     await limiter.enforce(
         RateLimitRule("ai_calls", settings.rate_limit_ai_calls_per_hour, 3600), session.session_id
     )
+    enforce_session_ai_token_budget(session, settings.rate_limit_ai_tokens_per_session)
     document_raw = await manager.get_object(session, "document", payload.document_id)
     if document_raw is None:
         raise NotFoundError("No document with that id exists in this session.")

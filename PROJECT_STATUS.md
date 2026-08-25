@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 9 in progress (9D + 9E complete, 9F next)
+**Last updated:** 2026-08-25 · **Current phase:** Phase 9 in progress (9F–9I largely complete; live Gemini verification PENDING a real key; 9J final acceptance next)
 
 **Phase 9 was revised** after Phase 8 shipped: see [PHASE_9_IMPLEMENTATION_PLAN.md](PHASE_9_IMPLEMENTATION_PLAN.md)
 for the full sub-phase breakdown (9A architecture baseline → 9B privacy/consent → 9C extraction
@@ -648,18 +648,145 @@ synthetic `File`/`DataTransfer` onto the input via the browser tool's JS executi
 automation tool available this session has no native file-picker support - the same limitation
 noted in Phases 5-7.)
 
+### Phase 9F — Gemini AI integration
+
+`GeminiProvider` implemented behind the existing `LLMProvider` abstraction, alongside
+`AnthropicProvider` (not replacing it - both are selectable via `LLM_PROVIDER`). Architecture kept
+exactly as required: `Feature -> LLMProvider -> GeminiProvider -> Gemini API`; no feature imports
+the `google-genai` SDK directly.
+
+* `app/ai/providers.py::GeminiProvider` - uses the official Google GenAI SDK (`google.genai`,
+  `Client(...).aio.models.generate_content`), not the OpenAI-compatible endpoint. Confined the same
+  way `AnthropicProvider` confines the `anthropic` SDK. Any failure (invalid key, timeout, rate
+  limit, network) is caught broadly and resolves to `None` - honest unavailability, never a
+  fabricated response, matching `AnthropicProvider`'s existing behaviour exactly.
+* `app/config.py` - added `gemini_api_key`, `llm_model_gemini` (default `gemini-2.5-flash`,
+  fully configurable), and `llm_provider` gained a `"gemini"` option. Added
+  `is_configured_api_key()`: a value matching a known placeholder (`.env.example`'s literal
+  `YOUR_GEMINI_API_KEY_HERE`, plus a few generic placeholders like `changeme`) is treated as *not
+  configured* rather than a real credential - copying the example file verbatim into a real `.env`
+  degrades to the honest "unavailable" state instead of the provider attempting (and failing) a
+  real request with a dummy string. Applied consistently to the existing Anthropic key too.
+  `capabilities()["llm"]` and `validate_runtime()`'s production check both use it.
+* `.env.example` / `backend/.env` (gitignored, never committed) - `GEMINI_API_KEY`,
+  `LLM_MODEL_GEMINI` documented; see "Environment setup" below for exactly what to replace.
+* `backend/pyproject.toml` - added `google-genai>=1.0`.
+* **Real defect found and fixed while wiring this up**: adding `backend/.env` for local testing
+  broke `Settings()`'s test-suite defaults, since pydantic-settings loads `.env` unconditionally
+  and several tests construct `Settings()` without pinning every field. Fixed by disabling
+  `env_file` loading whenever `PYTEST_VERSION` is set (pytest sets it for the whole session,
+  before collection) - tests are now hermetic regardless of what a developer's local `.env`
+  contains, which was a latent gap this phase's own local file happened to expose.
+
+**Testing** - everything that doesn't require a live request: placeholder-detection, provider
+selection (`get_llm_provider` dispatch, including falling back to `NullLLMProvider` for a
+placeholder-only "gemini" selection), capability reporting, request construction (model,
+`contents`, `system_instruction`, `max_output_tokens` all asserted against a monkeypatched async
+client), successful-response parsing (text + `prompt_token_count`/`candidates_token_count` ->
+`LLMResponse`), an empty-response edge case, and four failure modes (invalid key, timeout, rate
+limit, network) all resolving to `None` - plus a test asserting the API key never appears in logs
+even when the call raises. `backend/tests/unit/test_gemini_provider.py`, 17 new tests.
+
+```
+backend    573 passed, 10 skipped   ruff clean   mypy clean
+```
+
+**PENDING — requires a real `GEMINI_API_KEY`:** an actual live Gemini response (real model output,
+real token usage, real latency/timeout behaviour against the live API) has not been exercised -
+only the request/response contract has been verified against a monkeypatched client. Once a real
+key is in place (see "Environment setup"), re-verify: a real bullet/summary rewrite, a real cover
+letter and interview-question generation (including their structured-JSON parse + fact-guard
+pass), and that `/ready` reports `llm: true`.
+
+### Phase 9G — Bounded AI career workflow
+
+The workflow itself already existed structurally from Phases 5-6 and 9E's redesign - resume
+analysis -> job match -> skill gaps -> AI proposals (rewrite/tailor) -> fact guard -> career
+actions (cover letter, interview prep, learning priorities) -> re-analysis by revisiting Health.
+It is bounded by construction: every AI action is explicitly user-triggered (nothing runs
+automatically), every generated proposal is fact-guarded before the caller ever sees it, and
+nothing is applied to the resume without an explicit accept. What Phase 9G closed was the one
+concretely open piece of "token-limited": a session-lifetime AI token budget, not just an
+hourly call-count limit.
+
+* `RATE_LIMIT_AI_TOKENS_PER_SESSION` (default 200,000) - `app.core.ratelimit.
+  enforce_session_ai_token_budget` checks `SessionCounters.ai_tokens` before `/v1/ai/rewrite`,
+  `/v1/cover-letter`, `/v1/interview/questions`, and the AI-assisted path of `/v1/tailor`, raising
+  the same `429 RATE_LIMITED` the hourly limiter uses once the cumulative session spend reaches
+  the cap. Closes the Phase 8 known gap ("`ai_tokens` is tracked but not enforced").
+
+```
+backend    9 new tests (test_ratelimit.py, test_ai_export_ratelimits.py)   all green
+```
+
+Verified against a real endpoint call, not just the unit-level check: a session configured with a
+token budget of 15 and a `FakeLLMProvider` reporting 20 tokens/call succeeds once, then the second
+`/v1/ai/rewrite` call is rejected with `429` before ever reaching the provider.
+
+### Phase 9H — Full product QA
+
+Ran the complete backend and frontend suites as the regression gate for everything shipped through
+9G; this is not a claim of exhaustive live-Gemini end-to-end QA, which stays PENDING alongside 9F's
+live-request verification above.
+
+```
+backend    573 passed, 10 skipped   ruff clean   mypy clean
+frontend   52 passed   eslint clean   tsc clean   next build clean
+```
+
+No new defects found this pass beyond the `.env`/test-isolation gap already fixed under 9F.
+
+### Phase 9I — CI, dependency lockfile
+
+* `.github/workflows/ci.yml` (new) - backend job (install from `requirements-lock.txt`, `ruff`,
+  `mypy`, `pytest`, `pip-audit`) and frontend job (`npm ci`, `eslint`, `typecheck`, `vitest`,
+  `next build`, `npm audit`) on every push/PR to `main`. Both audit steps are `continue-on-error`
+  (advisory, not yet a merge gate) so a known, already-triaged finding doesn't block unrelated
+  work. **Not yet run against a live GitHub Actions runner** - validated locally (YAML parses,
+  every command it runs was run manually against the same repo state in this session) but not
+  confirmed against the actual CI environment, since this session has no way to trigger one.
+* `backend/requirements-lock.txt` (new) - a pinned `pip freeze` snapshot of the environment every
+  test in this phase ran against (Python 3.13, including `google-genai`). `pyproject.toml` stays
+  the source of truth for floating lower bounds; this is what a reproducible install or CI uses.
+  Closes the Phase 8 known gap ("no backend dependency lockfile").
+* **Not done, deliberately:** the 3 high-severity `npm audit` findings (transitive `postcss`/
+  `sharp` via `next`, fixable only via a breaking `next` major-version bump) remain open - fixing
+  them wasn't part of this session's request, and force-upgrading a major frontend framework
+  version without a dedicated regression pass risks breaking the 9D/9E work just shipped. Tracked,
+  not silently dropped; `npm audit` now runs in CI so it stays visible rather than needing a manual
+  re-check to notice.
+* **Not done:** a real metrics exporter, staging/production environment configs, and container
+  hardening - out of scope for what this session's request covered; still tracked below.
+
 ## Planned
 
 | Sub-phase | Scope |
 |---|---|
-| 9F | Gemini AI integration (`GeminiProvider` behind the existing `LLMProvider` abstraction), replacing Anthropic as the configured provider |
-| 9G | Bounded, fact-guarded AI career workflow tying analysis → match → gaps → proposals → re-analysis together |
-| 9H | Full end-to-end product QA across every flow with real documents |
-| 9I | CI pipeline, dependency lockfile, the 3 pending `npm audit` findings, environments, a real metrics exporter |
-| 9J | Final acceptance against the full candidate/recruiter journey |
+| 9J | Final acceptance against the full candidate/recruiter journey, including the PENDING live-Gemini verification once a real key is provided |
 
 Nothing planned beyond Phase 9 - it's the last phase in the roadmap. Anything found after 9J ships
 becomes a new entry here rather than an unscheduled surprise.
+
+## Environment setup (Phase 9F)
+
+* **Location:** `backend/.env` (gitignored - never committed; `.env.example` at the repo root is
+  the committed, secret-free template both files are kept in sync with).
+* **Variable to replace:** `GEMINI_API_KEY`. It currently holds a value you supplied directly by
+  editing the file - the correct channel, since it's never pasted into chat or logged anywhere by
+  this session. `LLM_PROVIDER=gemini` and `LLM_MODEL_GEMINI` are already set, so no other edit is
+  needed.
+* Everything else in the app already treats that value as configured: `get_llm_provider` returns
+  `GeminiProvider`, `/ready` reports `llm: true`, and every AI-backed screen's "Improve with AI" /
+  cover letter / interview prep controls will attempt a real call the next time they're used.
+* **Restart required:** yes - `Settings` is loaded once at process startup (`get_settings()` is
+  `lru_cache`d) and pydantic-settings reads `.env` at that point, so the backend process must be
+  restarted (`uvicorn app.main:app --reload` picks this up on its own reload; a non-`--reload`
+  process needs a manual restart) for a changed key to take effect. No code change is required.
+* **Live tests still PENDING a real key:** a real bullet/summary rewrite via `/v1/ai/rewrite`, a
+  real cover letter and interview-question generation (including fact-guard behaviour against
+  genuine model output, not the monkeypatched fixture used in `test_gemini_provider.py`), real
+  token-usage figures from an actual response, and confirming `/ready`'s `capabilities.llm`
+  reflects `true` against the live deployment.
 
 ## Architecture decisions
 
@@ -675,7 +802,8 @@ becomes a new entry here rather than an unscheduled surprise.
 ## Development commands
 
 ```bash
-# Backend (from backend/)
+# Backend (from backend/) - reproducible install from the pinned lockfile (Phase 9I):
+#   ../.venv/Scripts/python.exe -m pip install -r requirements-lock.txt && pip install -e ".[dev]"
 ../.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8000
 ../.venv/Scripts/python.exe -m pytest tests -q
 ../.venv/Scripts/python.exe -m ruff check app tests
@@ -697,12 +825,10 @@ No Docker, no Redis, no database and no API key is needed to run any of the abov
 |---|---|---|
 | Redis not installed | Redis backend unexercised locally | 10 conformance tests skip with a clear reason; run them with `TEST_REDIS_URL` set. Memory backend covers development |
 | Tesseract not installed | Scanned/image-only PDFs fail with `422 NO_EXTRACTABLE_TEXT` | Provider abstraction built in Phase 2 (`app.documents.extract.ocr`); feature-detected and reported false by `/ready`, honest error rather than silent failure or fake text |
-| No LLM key | Layer 3 (AI writing, tailoring, cover letters, interview prep) cannot run | `/ready` reports `llm: false`. `NullLLMProvider` reports every AI feature honestly unavailable rather than erroring or fabricating; deterministic tailoring (skill reordering, requirement reminders) and learning priorities work with no key at all. Semantic matching (Phase 4) needed no key and is confirmed working — ADR-0005's bet on local ONNX embeddings paid off |
-| No CI pipeline yet | Gates run locally only; `pip-audit`/`npm audit` run manually, not automatically | Phase 9 |
-| No backend dependency lockfile | Reproducible backend installs depend on nobody upgrading a dependency between two `pip install`s | Found in Phase 8's security review; adopting `uv` or pip-tools tracked for Phase 9 |
-| 3 high-severity `npm audit` findings | Transitive `postcss`/`sharp` vulnerabilities via `next`, fixable only via a breaking `next` major-version upgrade | Found in Phase 8, deliberately not force-upgraded mid-hardening-pass without a regression budget; tracked for a planned, tested upgrade in Phase 9 |
-| `ai_tokens` is tracked but not enforced | A session can exceed a token budget as long as it stays under the AI-call-count limit | Wired for observability in Phase 8 (`GET /v1/session` counters); converting it into an actual enforced cap is optional Phase 9 follow-up |
-| Active session count, temp-storage bytes, and cleanup success/failure are not in `/metrics` | Phase 8's metrics registry covers request latency and screening job outcomes only | Active session count needs a `SessionStore` namespace-scan capability that doesn't exist yet (a full key scan is a real cost on Redis) - not added as a memory-backend-only half-measure. Tracked for Phase 9 alongside a real metrics exporter |
+| No *real* LLM key exercised yet | Gemini's request/response contract is verified against a monkeypatched client only - no live model call has been made | Phase 9F: `GeminiProvider` implemented and unit-tested; `/ready` reports `llm: true` the moment a real `GEMINI_API_KEY` replaces the placeholder in `backend/.env` and the backend restarts. Live verification is explicitly PENDING - see PROJECT_STATUS.md's Phase 9F section |
+| 3 high-severity `npm audit` findings | Transitive `postcss`/`sharp` vulnerabilities via `next`, fixable only via a breaking `next` major-version upgrade | Found in Phase 8, still open in Phase 9I - deliberately not force-upgraded without a dedicated regression pass; now surfaced automatically by CI (`npm audit` step) instead of needing a manual re-check |
+| Active session count, temp-storage bytes, and cleanup success/failure are not in `/metrics` | Phase 8's metrics registry covers request latency and screening job outcomes only | Active session count needs a `SessionStore` namespace-scan capability that doesn't exist yet (a full key scan is a real cost on Redis) - not added as a memory-backend-only half-measure. Still tracked; no real metrics exporter (Prometheus etc.) exists either |
+| No staging/production environment configs or container hardening | Phase 9I's CI pipeline covers tests/lint/audit only, not deployment | Out of scope for what's been requested so far; tracked as remaining Phase 9I/9J work |
 
 ## Current blockers
 
@@ -711,7 +837,9 @@ None.
 ## Open questions (non-blocking; defaults chosen and documented)
 
 1. **Hosting target** — undecided; architecture stays platform-neutral until Phase 9.
-2. **LLM credentials** — needed before Phase 5/6's AI-backed features (rewriting, tailoring's
-   bullet rewrites, cover letters, interview prep) can be exercised end to end with a real model;
-   every deterministic path in both phases, plus learning priorities, needs no key at all.
+2. **LLM credentials** — `GEMINI_API_KEY` is now set in `backend/.env` (Phase 9F); live
+   verification of the AI-backed features (rewriting, tailoring's AI-assisted bullets, cover
+   letters, interview prep) with a real Gemini response is the one remaining PENDING item. Every
+   deterministic path (matching, deterministic tailoring, learning priorities) needs no key at all
+   and is already confirmed working.
 3. **Session TTL defaults** — 60 min idle / 8 h absolute / 120 s release grace; revisit against real usage.

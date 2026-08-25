@@ -16,7 +16,7 @@ from app.ai.providers import get_llm_provider
 from app.ai.tailor import TailorProposal, apply_proposals, generate_tailor_proposals
 from app.core.deps import ActiveSessionDep, RateLimiterDep, SessionManagerDep, SettingsDep
 from app.core.errors import NotFoundError
-from app.core.ratelimit import RateLimitRule
+from app.core.ratelimit import RateLimitRule, enforce_session_ai_token_budget
 from app.jobs.models import JobDescription
 from app.logging import get_logger
 from app.matching.embeddings import get_embedding_provider
@@ -69,6 +69,7 @@ async def generate(
             RateLimitRule("ai_calls", settings.rate_limit_ai_calls_per_hour, 3600),
             session.session_id,
         )
+        enforce_session_ai_token_budget(session, settings.rate_limit_ai_tokens_per_session)
     proposals = await generate_tailor_proposals(version.resume, gaps, llm_provider)
 
     ai_proposal_count = sum(1 for p in proposals if p.requires_ai)

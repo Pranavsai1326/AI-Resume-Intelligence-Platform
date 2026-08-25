@@ -2,14 +2,35 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from app.core.clock import FakeClock
 from app.core.errors import RateLimitedError
-from app.core.ratelimit import RateLimiter, RateLimitRule, hash_identity
+from app.core.ratelimit import (
+    RateLimiter,
+    RateLimitRule,
+    enforce_session_ai_token_budget,
+    hash_identity,
+)
 from app.sessions.memory import MemorySessionStore
+from app.sessions.models import SessionCounters, SessionMeta, SessionMode, generate_session_id
 
 RULE = RateLimitRule("test", limit=3, window_seconds=60)
+
+
+def _session(ai_tokens: int) -> SessionMeta:
+    now = datetime.now(UTC)
+    return SessionMeta(
+        session_id=generate_session_id(),
+        mode=SessionMode.CANDIDATE,
+        created_at=now,
+        last_activity_at=now,
+        expires_at=now + timedelta(hours=1),
+        hard_expires_at=now + timedelta(hours=8),
+        counters=SessionCounters(ai_tokens=ai_tokens),
+    )
 
 
 async def test_allows_up_to_limit(memory_store: MemorySessionStore) -> None:
@@ -85,3 +106,24 @@ async def test_counter_keys_carry_a_ttl(memory_store: MemorySessionStore) -> Non
     key = f"rl:test:{hash_identity('1.2.3.4')}"
     ttl = await memory_store.ttl(key)
     assert ttl is not None and 0 < ttl <= 60
+
+
+class TestSessionAiTokenBudget:
+    """Phase 9G: a session-lifetime AI token cap, distinct from the sliding-window limiter
+    above - it never resets mid-session, since the point is to bound total spend, not pace it."""
+
+    def test_allows_spend_under_the_limit(self) -> None:
+        enforce_session_ai_token_budget(_session(ai_tokens=50), limit=100)  # must not raise
+
+    def test_blocks_once_the_limit_is_reached(self) -> None:
+        with pytest.raises(RateLimitedError) as excinfo:
+            enforce_session_ai_token_budget(_session(ai_tokens=100), limit=100)
+        assert excinfo.value.status_code == 429
+        assert "Retry-After" in excinfo.value.headers
+
+    def test_blocks_once_the_limit_is_exceeded(self) -> None:
+        with pytest.raises(RateLimitedError):
+            enforce_session_ai_token_budget(_session(ai_tokens=150), limit=100)
+
+    def test_a_fresh_session_is_never_blocked(self) -> None:
+        enforce_session_ai_token_budget(_session(ai_tokens=0), limit=100)  # must not raise

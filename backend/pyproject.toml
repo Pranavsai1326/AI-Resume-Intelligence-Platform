@@ -17,6 +17,7 @@ dependencies = [
     "chardet>=5.2",
     "fastembed>=0.7",
     "anthropic>=1.0",
+    "google-genai>=1.0",
     "playwright>=1.62",
 ]
 
