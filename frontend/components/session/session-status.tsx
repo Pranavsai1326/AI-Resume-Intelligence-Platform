@@ -39,7 +39,7 @@ export function SessionStatus() {
         </span>
       </span>
       <Button variant="ghost" size="sm" onClick={() => void end()}>
-        End session
+        End session &amp; delete data
       </Button>
     </div>
   );

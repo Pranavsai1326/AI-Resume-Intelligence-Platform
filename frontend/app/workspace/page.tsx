@@ -2,10 +2,12 @@
 
 import * as React from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { ResumeAnalyzer } from "@/components/analysis/resume-analyzer";
 import { AppShell } from "@/components/layout/app-shell";
 import { ScreeningWorkspace } from "@/components/screening/screening-workspace";
+import { ConsentGate } from "@/components/session/consent-gate";
 import { useSessionActions } from "@/components/session/session-provider";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +48,10 @@ export default function WorkspacePage() {
   const error = useSessionStore((s) => s.error);
   const { start } = useSessionActions();
   const [ready, setReady] = React.useState<ReadyInfo | null>(null);
+  const router = useRouter();
+  // Plain component state, nothing persisted (Phase 9B) - consent is tied to the act of
+  // starting a session in this page load, not a saved preference. A reload asks again.
+  const [consented, setConsented] = React.useState(false);
 
   React.useEffect(() => {
     if (status !== "active") return;
@@ -75,6 +81,14 @@ export default function WorkspacePage() {
   }
 
   if (status !== "active" || !info) {
+    if (!consented) {
+      return (
+        <AppShell>
+          <ConsentGate onAgree={() => setConsented(true)} onDecline={() => router.push("/")} />
+        </AppShell>
+      );
+    }
+
     return (
       <AppShell>
         <div className="mx-auto max-w-2xl py-8">

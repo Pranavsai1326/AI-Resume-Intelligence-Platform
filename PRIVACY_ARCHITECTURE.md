@@ -58,6 +58,10 @@ unambiguous.
   source of truth until it expires.
 * `sessionStorage` holds **only** `session_id` and `session_mode` — technical metadata. We document
   that `sessionStorage` survives reload and per-tab restore, which is why it may not hold content.
+* Consent (Phase 9B, `components/session/consent-gate.tsx`) is plain React component state, not
+  written to any storage at all - deliberately, since it is tied to the act of starting a session
+  in the current page load, not a saved preference. A reload asks again; that is the honest
+  behaviour for a tool that promises not to remember the user.
 * A lint rule plus a test forbid `localStorage`/`indexedDB` usage outside an allowlisted theme
   preference module.
 

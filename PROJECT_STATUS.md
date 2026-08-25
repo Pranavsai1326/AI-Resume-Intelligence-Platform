@@ -1,6 +1,13 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 8 complete → Phase 9 ready to start
+**Last updated:** 2026-08-25 · **Current phase:** Phase 9 in progress (9B complete, 9C next)
+
+**Phase 9 was revised** after Phase 8 shipped: see [PHASE_9_IMPLEMENTATION_PLAN.md](PHASE_9_IMPLEMENTATION_PLAN.md)
+for the full sub-phase breakdown (9A architecture baseline → 9B privacy/consent → 9C extraction
+reliability → 9D extraction review UI → 9E frontend redesign → 9F Gemini AI integration → 9G
+bounded AI career workflow → 9H full product QA → 9I CI/security/deployment → 9J final
+acceptance). The original "Phase 9 = deployment only" scope below is superseded by that plan;
+deployment work now lives in 9I.
 
 > Read this file first in every session, then only the architecture docs relevant to the task.
 > Update it after every meaningful implementation change.
@@ -452,31 +459,64 @@ proposal interfaces for type accuracy (`frontend/lib/api-client.ts`) - Phase 8 w
 hardening pass, not a feature phase, so `npm test`/`typecheck`/`lint`/`build` were re-run to
 confirm nothing broke but no new frontend tests were needed.
 
+### Phase 9A — Architecture & product baseline
+
+Reviewed the full repository (backend, frontend, tests, API surface, all architecture docs)
+against [PHASE_9_IMPLEMENTATION_PLAN.md](PHASE_9_IMPLEMENTATION_PLAN.md) before changing anything.
+No gaps found beyond what Phase 8 already documented as known limitations. Proceeded to 9B.
+
+### Phase 9B — Privacy & consent
+
+**Frontend** (`frontend/components/session/consent-gate.tsx`)
+
+A mandatory, explicit consent step - genuinely gating, not a checkbox easy to miss - shown before
+either "Start candidate session" / "Start screening session" button is reachable. Two actions:
+"I agree — continue" (reveals the existing mode-selection screen) and "Decline" (routes back to
+the landing page). Consent lives in plain React component state, written to no storage at all
+(not even `sessionStorage`, which already only holds `session_id`/`session_mode` per
+PRIVACY_ARCHITECTURE.md section 4) - a reload asks again, since consent is tied to the act of
+starting *this* session, not a saved preference. An already-active session (rejoined after a
+reload) skips the gate, since consent was already given when that session was created.
+
+Content covers: no account/no database, the TTL and immediate-deletion option, that AI features
+send only the minimum necessary text to a configured provider (never more, and features report
+themselves honestly unavailable with none configured), and an explicit warning that closing the
+tab does not delete data instantly - deletion is server-enforced on the stated schedule, not
+browser-enforced. `components/session/session-status.tsx`'s destructive action was renamed "End
+session" → "End session & delete data" to say plainly what it does.
+
+**Verification** — all green:
+
+```
+frontend   42 passed   eslint clean   tsc --noEmit clean   next build clean
+```
+
+Verified live end to end against a running backend: landing → workspace shows the consent gate
+first (not the mode cards) → Decline routes back to `/` → Agree reveals the mode cards → starting
+a session works normally → reloading an active session skips the gate and rejoins directly →
+"End session & delete data" fires `DELETE /v1/session` (`204`) and returns to the consent gate.
+Zero console errors throughout.
+
 ## In progress
 
-Nothing. Phase 8 is committed.
-
-## Next task — Phase 9 (deployment)
-
-1. CI pipeline: lint, type-check, test, `pip-audit`, `npm audit` on every push - closes several
-   of Phase 8's "not yet automated" gaps at once
-2. Adopt a backend dependency lockfile (`uv` or pip-tools) - Phase 8 found this missing
-3. Resolve the 3 high-severity `npm audit` findings (transitive `postcss`/`sharp` via `next`) via
-   a planned, tested major-version upgrade rather than a forced one mid-hardening-pass
-4. Environments (dev/staging/production config), health checks wired to a real orchestrator,
-   DEPLOYMENT.md and TESTING.md
-5. A real metrics exporter (Prometheus or equivalent) behind the recording calls Phase 8 already
-   added, plus the "not yet wired" gauges noted above (temp-storage bytes, cleanup success/
-   failure, active session count - the last needs a `SessionStore` capability that doesn't exist
-   yet)
-6. Convert the `ai_tokens` counter from observability-only into an actual enforced per-session
-   budget, if wanted
+Phase 9C (resume extraction & reconstruction reliability) is next - see
+[PHASE_9_IMPLEMENTATION_PLAN.md](PHASE_9_IMPLEMENTATION_PLAN.md) for 9C through 9J.
 
 ## Planned
 
-Nothing beyond Phase 9 - it's the last phase in the original roadmap (PRD.md's M1-M14 modules and
-the 9-phase build order are now fully scheduled). Anything found after Phase 9 ships becomes a new
-entry here rather than an unscheduled surprise.
+| Sub-phase | Scope |
+|---|---|
+| 9C | Resume extraction & reconstruction reliability - real-world PDF/DOCX layouts, section detection, entry boundaries, nesting |
+| 9D | Extraction review UI - user can inspect and correct the structured resume before it becomes the source of truth for everything downstream |
+| 9E | Complete frontend redesign around the real product journey; remove unnecessary UI text |
+| 9F | Gemini AI integration (`GeminiProvider` behind the existing `LLMProvider` abstraction), replacing Anthropic as the configured provider |
+| 9G | Bounded, fact-guarded AI career workflow tying analysis → match → gaps → proposals → re-analysis together |
+| 9H | Full end-to-end product QA across every flow with real documents |
+| 9I | CI pipeline, dependency lockfile, the 3 pending `npm audit` findings, environments, a real metrics exporter |
+| 9J | Final acceptance against the full candidate/recruiter journey |
+
+Nothing planned beyond Phase 9 - it's the last phase in the roadmap. Anything found after 9J ships
+becomes a new entry here rather than an unscheduled surprise.
 
 ## Architecture decisions
 
