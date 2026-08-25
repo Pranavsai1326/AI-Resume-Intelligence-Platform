@@ -2,18 +2,20 @@
 
 Deterministic heuristics (AI_ARCHITECTURE.md Layer 1), not an LLM: a line is recognised as a
 section header either by matching a canonical keyword ("Work Experience", "Employment History",
-...) or by looking structurally like a header (short, title-case or all-caps, no trailing
-punctuation). Neither test is perfect - resumes are not standardised documents - so this is
-documented as a heuristic and every detected section keeps its original header text, letting a
-misclassified section still be inspected rather than silently discarded.
+...) or by looking structurally like a header (see
+``app.documents.heading_split.looks_like_all_caps_header``). Neither test is perfect - resumes
+are not standardised documents - so this is documented as a heuristic and every detected section
+keeps its original header text, letting a misclassified section still be inspected rather than
+silently discarded.
 """
 
 from __future__ import annotations
 
-import re
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
+
+from app.documents.heading_split import find_headers, slice_bodies
 
 
 class SectionKind(StrEnum):
@@ -76,58 +78,14 @@ _HEADER_KEYWORDS: dict[str, SectionKind] = {
     "certifications & licenses": SectionKind.CERTIFICATIONS,
 }
 
-#: A candidate header line: short, letters/spaces/basic punctuation only, no sentence-ending
-#: punctuation. Deliberately conservative - a false negative just falls into the previous
-#: section's body, which is recoverable; a false positive fragments real content.
-_HEADER_SHAPE_RE = re.compile(r"^[A-Za-z][A-Za-z\s&/,'\-]{1,45}$")
-_TRAILING_PUNCTUATION_RE = re.compile(r"[:\-–—]+$")
-
-
-def _normalize_header(line: str) -> str:
-    return _TRAILING_PUNCTUATION_RE.sub("", line.strip()).strip().lower()
-
-
-def _looks_like_header(line: str) -> bool:
-    """Fallback detector for a custom section header not in the known-keyword list.
-
-    Deliberately narrow: ALL-CAPS only. A title-case shape test was tried and rejected - it
-    matched ordinary content lines just as readily as headers (a person's name, "Senior Backend
-    Engineer, Cascade Systems"), fragmenting the contact block and experience entries into bogus
-    sections. Known headers in any casing ("Experience", "SKILLS", "Education") are still caught
-    by the keyword table above regardless of this function; this path exists only for a header
-    like "AWARDS" or "PUBLICATIONS" that is not in that table. A custom header written in
-    ordinary title case (rare) is missed and its content simply stays part of the previous
-    section - a safe failure mode, unlike corrupting the sections around it.
-    """
-    stripped = line.strip()
-    if not (3 <= len(stripped) <= 45):
-        return False
-    if not _HEADER_SHAPE_RE.match(stripped):
-        return False
-    letters = [c for c in stripped if c.isalpha()]
-    if len(letters) < 3:
-        return False
-    upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
-    return upper_ratio > 0.85
-
 
 def detect_sections(text: str) -> list[DetectedSection]:
     lines = text.split("\n")
-    headers: list[tuple[int, SectionKind, str]] = []
-
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        normalized = _normalize_header(stripped)
-        if normalized in _HEADER_KEYWORDS:
-            headers.append((index, _HEADER_KEYWORDS[normalized], stripped))
-        elif _looks_like_header(stripped):
-            headers.append((index, SectionKind.CUSTOM, stripped))
+    headers = find_headers(lines, _HEADER_KEYWORDS, fallback_kind=SectionKind.CUSTOM)
 
     sections: list[DetectedSection] = []
 
-    preamble_end = headers[0][0] if headers else len(lines)
+    preamble_end = headers[0].line_index if headers else len(lines)
     if preamble_end > 0:
         preamble = "\n".join(lines[:preamble_end]).strip()
         if preamble:
@@ -141,13 +99,17 @@ def detect_sections(text: str) -> list[DetectedSection]:
                 )
             )
 
-    for position, (line_index, kind, title) in enumerate(headers):
-        body_start = line_index + 1
-        body_end = headers[position + 1][0] if position + 1 < len(headers) else len(lines)
-        body = "\n".join(lines[body_start:body_end]).strip()
+    for position, (header, body) in enumerate(slice_bodies(lines, headers)):
+        body_end = (
+            headers[position + 1].line_index if position + 1 < len(headers) else len(lines)
+        )
         sections.append(
             DetectedSection(
-                kind=kind, title=title, body=body, start_line=line_index, end_line=body_end
+                kind=header.kind,
+                title=header.title,
+                body=body,
+                start_line=header.line_index,
+                end_line=body_end,
             )
         )
 

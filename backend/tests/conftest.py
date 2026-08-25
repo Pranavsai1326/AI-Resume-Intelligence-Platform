@@ -42,6 +42,10 @@ def settings(tmp_path: Path) -> Settings:
         session_store_backend="memory",
         rate_limit_enabled=False,
         log_format="json",
+        # Keep the default test suite hermetic and fast: no network call, no ~130MB model
+        # download mid-run. Tests that specifically exercise real embeddings opt in explicitly
+        # and skip gracefully if the model cannot be loaded (tests/unit/test_embeddings.py).
+        embedding_backend="none",
     )
 
 
@@ -77,6 +81,7 @@ async def rate_limited_client(tmp_path: Path) -> AsyncIterator[AsyncClient]:
         rate_limit_enabled=True,
         rate_limit_requests_per_minute=5,
         rate_limit_session_create_per_hour=2,
+        embedding_backend="none",
         log_format="json",
     )
     app = create_app(settings)

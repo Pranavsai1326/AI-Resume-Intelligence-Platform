@@ -15,6 +15,7 @@ from app.analysis.experience_quality import score_experience_quality
 from app.analysis.formatting import score_formatting
 from app.analysis.impact import score_impact
 from app.analysis.models import ComponentScore, ResumeHealthResult
+from app.analysis.scoring_utils import apply_degrade_and_renormalize
 from app.analysis.skills_coverage import score_skills_coverage
 from app.documents.extract.base import LayoutSignals
 from app.resume.models import Resume
@@ -36,17 +37,10 @@ def compute_resume_health(
         "impact": score_impact(resume, profile.weights["impact"]),
     }
 
-    available = {key: c for key, c in components.items() if c.available}
-    degraded = [key for key, c in components.items() if not c.available]
-
-    weight_total = sum(c.weight for c in available.values())
-    if weight_total <= 0:
-        overall = 0.0
-    else:
-        overall = sum(c.score * c.weight for c in available.values()) / weight_total
+    components, overall, degraded = apply_degrade_and_renormalize(components)
 
     return ResumeHealthResult(
-        overall=round(overall, 1),
+        overall=overall,
         components=components,
         degraded=degraded,
         methodology={"profile": profile.name, "version": profile.version},

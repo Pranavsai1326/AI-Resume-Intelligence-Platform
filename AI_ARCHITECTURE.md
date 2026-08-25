@@ -115,15 +115,29 @@ a cache hit with zero token cost.
 
 ## 8. Embeddings
 
+Built in Phase 4 (`app/matching/embeddings.py`), consumed by `project_relevance` and
+`semantic_relevance` (`app/matching/semantic.py`) and by the skill-gap `insufficient_evidence`
+bucket (`app/matching/gaps.py`).
+
 * Default backend: **fastembed** with `bge-small-en-v1.5` (ONNX, CPU) running in-process — resume
-  text never leaves the server for semantic matching (ADR-0005).
-* Alternative: remote embedding adapter, same interface, chosen by `EMBEDDING_BACKEND`.
-* Vectors are session-scoped with the session's TTL. There is no vector database and no cross-session
-  index.
-* Similarity is cosine; thresholds are configuration, and every semantic match reports the matched
-  pair and score so it can be explained.
-* If the embedding runtime is unavailable, semantic components report `availability: false` and the
-  scoring engine renormalises weights with a visible `degraded` notice.
+  and job-description text never leaves the server for semantic matching (ADR-0005). One model
+  instance per process (`@lru_cache`), loaded lazily on first use; the ~130 MB of weights
+  download to a local cache the first time, not on every request.
+* Alternative: remote embedding adapter (`EMBEDDING_BACKEND=remote`) - interface exists, no
+  provider implemented yet.
+* Vectors are computed fresh per request and never stored - not even session-scoped. A match
+  result's *conclusions* (scores, skill-gap buckets) are cached per `(document_id, job_id)`
+  (AI_ARCHITECTURE.md section 6), but the embedding vectors themselves are not a durable
+  artefact anywhere; there is no vector database and no cross-session index.
+* Similarity is cosine, rescaled onto 0-100 against an empirically calibrated range (bge-small
+  clusters related professional text around 0.5-0.85 and unrelated text around 0.3-0.45 -
+  raw cosine values do not map linearly onto "how good a match", so a fixed floor/ceiling is
+  applied and documented at the point of use rather than left as an unexplained magic number).
+* If the embedding package or model cannot load (`FastEmbedProvider.is_available()` is false),
+  `project_relevance` and `semantic_relevance` report `available: false` and the scoring engine
+  renormalises the remaining weights with a visible `degraded` list
+  (`app.analysis.scoring_utils.apply_degrade_and_renormalize`) - the first component in the
+  product to actually exercise the degrade mechanism Phase 3 built for this.
 
 ## 9. Where AI is and is not allowed
 

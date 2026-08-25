@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 3 complete → Phase 4 ready to start
+**Last updated:** 2026-08-25 · **Current phase:** Phase 4 complete → Phase 5 ready to start
 
 > Read this file first in every session, then only the architecture docs relevant to the task.
 > Update it after every meaningful implementation change.
@@ -176,33 +176,93 @@ Both were caught by manually inspecting real component output against synthetic 
 things a type checker or a passing assertion would have caught, which is why the models were
 smoke-tested against printed output before the formal test suite was written.
 
+### Phase 4 — Job intelligence
+
+**Backend** (`backend/app/jobs/`, `backend/app/matching/`)
+
+| Area | Delivered |
+|---|---|
+| JD parsing | Deterministic (`app/jobs/parse.py`): title extraction, section detection reused from resume parsing via a newly-shared `app.documents.heading_split` module, requirements split into required/preferred/responsibilities/ignored, each requirement classified as skill / soft-skill / experience / education / certification with years and education-level extraction |
+| Skill matching | Word-boundary-safe skill detection (`app.analysis.taxonomy.contains_skill_mention`) — fixes a real substring-matching bug (see Defects below) shared by JD keyword extraction, resume skills-coverage grounding, and gap analysis |
+| Embeddings | `app/matching/embeddings.py`: `EmbeddingProvider` protocol, `NullEmbeddingProvider`, and a real `FastEmbedProvider` (fastembed, `bge-small-en-v1.5`, ADR-0005) as a lazily-loaded process singleton. `EMBEDDING_BACKEND` now defaults to `fastembed` (was `none` in Phase 1, before any real consumer existed); `/ready` reports package-presence honestly, the provider itself reports whether the model actually loaded |
+| Deterministic components | Required Skills, Preferred Skills, Experience (years, summed per role), Education (highest level detected vs. required) — always available, no external dependency |
+| Semantic components | Project Relevance, Semantic Relevance — need the embedding provider; report `available: false` and exercise the degrade/renormalise path Phase 3 built but never triggered, when the model can't load |
+| Skill gaps | Strong / Moderate / Missing / Insufficient-Evidence buckets (`app/matching/gaps.py`); the fourth bucket needs the semantic layer to distinguish "no evidence at all" from "something plausibly related is listed" — falls back to a coarser Strong/Moderate/Missing without it |
+| API | `POST/GET /v1/jobs{,/{id}}`, `POST /v1/match` (one endpoint computing all six components plus skill gaps together, not the two speculative endpoints Phase 0 sketched — gap analysis reuses the same checks the scores already compute), both cached per-session |
+
+**Frontend**: extends the Phase 3 analyzer — after a resume is analyzed, an optional "Match
+against a job" panel accepts pasted JD text and renders the full match report (score bars,
+evidence, skill-gap buckets) using UI components refactored to be shared between resume-health
+and job-match display (`components/analysis/component-score-list.tsx`).
+
+**Verification** — all green:
+
+```
+backend    378 passed, 10 skipped (Redis, no server present)   ruff clean   mypy --strict clean
+frontend   28 passed   eslint clean   tsc --noEmit clean   next build clean
+```
+
+The real fastembed model was exercised, not mocked: `tests/unit/test_embeddings.py` loads the
+actual ONNX model (skips gracefully if it cannot - offline, no cache yet) and asserts related
+professional text scores meaningfully higher than unrelated text. The rest of the suite uses a
+deterministic fake provider (`tests/matching_fakes.py`) so it stays fast and hermetic; the default
+`client`/`settings` test fixtures run with `embedding_backend="none"`, so every integration test
+genuinely exercises the degrade path rather than assuming it. Also verified live end to end
+through the real running frontend against the real running backend, with real embeddings: upload
+→ analyze → paste a JD → match → skill gaps, including a correct semantic upgrade of "Terraform"
+to "worth confirming" based on Kubernetes/AWS already being listed.
+
+### Defects found and fixed during Phase 4
+
+1. **Naive substring skill matching was a real bug, not a style nit.** `skill in text` matched
+   "r" (the language) inside "your"/"were"/"programmer" and "go" inside "google"/"algorithm" -
+   caught while smoke-testing JD parsing output, where "Strong communication skills" was
+   misclassified as containing the skills "r" and "go". Fixed with word-boundary matching
+   (`app.analysis.taxonomy.contains_skill_mention`), which also fixed a latent instance of the
+   same bug in Phase 3's `skills_coverage.py` grounding check.
+2. **Taxonomy design overlap**: soft-skill words ("leadership", "communication") lived in the
+   same `COMMON_SKILLS` set as technical skills, which silently broke JD requirement
+   classification (a requirement matching both a soft skill and a "skill" always resolved to
+   the technical branch). Split into `COMMON_SKILLS` and a new `SOFT_SKILLS` set.
+3. **`ComponentScore.weight` was documented as "post-renormalisation" but never actually
+   rewritten** by Phase 3's engine - harmless there since nothing ever degraded, but would have
+   silently misreported weights the moment a match component genuinely went unavailable. Fixed
+   with a shared `apply_degrade_and_renormalize` helper, applied retroactively to the resume-
+   health engine too so both report weights consistently.
+4. **The `insufficient_evidence` semantic threshold was miscalibrated on first measurement.**
+   Bare single-word embeddings ("communication" vs "Go") cluster at 0.55-0.65 regardless of
+   actual relatedness, which would have made the skill-gap semantic upgrade fire on noise.
+   Measured real similarity scores for related vs. unrelated short phrases before picking a
+   threshold (0.68), and switched from bare keywords to full-phrase context, which meaningfully
+   improved discrimination (0.68-0.73 for genuinely related pairs vs. 0.52-0.57 for unrelated).
+5. **Two-entry education sections without a blank line between them collapse into one entry** -
+   a real, narrow Phase 2 parser gap surfaced by a Phase 4 test (education entries have no
+   bullets, so the PDF-blank-line-collapse fallback that rescues multi-entry experience/project
+   sections has nothing to anchor on). Documented rather than patched under time pressure this
+   late in the phase; tracked below.
+
 ## In progress
 
-Nothing. Phase 3 is committed.
+Nothing. Phase 4 is committed.
 
-## Next task — Phase 4 (job intelligence)
+## Next task — Phase 5 (resume builder)
 
-1. Job description upload/paste and parsing: title, required/preferred/optional requirement
-   split, experience/education thresholds, certifications, responsibilities, soft skills — each
-   requirement keeping its source span
-2. Deterministic resume↔JD matching: exact/alias skill matching, experience and education
-   threshold checks
-3. Semantic layer: local ONNX embeddings (fastembed, ADR-0005) for skill/requirement similarity —
-   the first component that can actually be unavailable, exercising the degrade/renormalise path
-   Phase 3 built but never triggered
-4. Skill gap analysis: Strong / Moderate / Missing / Insufficient-evidence buckets tied to the
-   target role
-5. Extend the scoring engine's `ScoringProfile` mechanism (already generic) with the match
-   profile from ARCHITECTURE.md section 7
-6. Frontend: JD input, match score display, skill gap view
-7. Tests: JD parsing fixtures, matching unit tests, embedding-unavailable degradation tests, API
-   and privacy tests
+1. Section editor with live preview, drag/reorder, and templates
+2. AI-assisted writing (summary, bullets) - first real consumer of Layer 3; requires
+   `ANTHROPIC_API_KEY` to do anything beyond report itself honestly unavailable
+3. Resume tailoring: turn Phase 4's skill gaps and match evidence into concrete edit proposals,
+   fact-guarded against the session's own content (AI_ARCHITECTURE.md section 5)
+4. In-session resume versions (original, tailored-per-job, ATS-optimized)
+5. PDF export via headless Chromium (ADR-0006) and DOCX export
+6. Fix the Phase 2 education multi-entry-without-blank-line gap noted above, since the builder
+   is where users will notice a collapsed entry and want to split it
+7. Tests: AI-unavailable fallback tests, fact-guard tests against deliberately hallucinated
+   samples, export rendering tests, API and privacy tests
 
 ## Planned
 
 | Phase | Scope |
 |---|---|
-| 5 | Resume builder: editor, templates, live preview, AI writing, tailoring, versions, PDF/DOCX export |
 | 6 | Career intelligence: cover letters, interview prep, learning priorities |
 | 7 | Recruiter screening: bulk async pipeline, extraction, ranking, comparison, shortlist, export |
 | 8 | Production hardening: security, rate limits, retries, performance, monitoring, AI evaluation, cost |
@@ -244,8 +304,9 @@ No Docker, no Redis, no database and no API key is needed to run any of the abov
 |---|---|---|
 | Redis not installed | Redis backend unexercised locally | 10 conformance tests skip with a clear reason; run them with `TEST_REDIS_URL` set. Memory backend covers development |
 | Tesseract not installed | Scanned/image-only PDFs fail with `422 NO_EXTRACTABLE_TEXT` | Provider abstraction built in Phase 2 (`app.documents.extract.ocr`); feature-detected and reported false by `/ready`, honest error rather than silent failure or fake text |
-| No LLM key | Layer 3 (AI writing, cover letters, interview prep) cannot run | `/ready` reports `llm: false`; not needed until Phase 5–6. Phase 4's semantic matching needs no key — ADR-0005 chose local ONNX embeddings specifically so this stays true |
+| No LLM key | Layer 3 (AI writing, cover letters, interview prep) cannot run | `/ready` reports `llm: false`; needed starting Phase 5. Semantic matching (Phase 4) needed no key and is confirmed working — ADR-0005's bet on local ONNX embeddings paid off |
 | Playwright not installed | PDF export unavailable | Phase 5 concern; `/ready` reports `pdf_export: false` |
+| Education entries without a blank line between them collapse into one | Rare, narrow resume-parsing gap (Phase 2) surfaced by a Phase 4 test | Documented, not yet fixed; queued for Phase 5, where the builder UI is where a user would actually notice and want to split it |
 | No CI pipeline yet | Gates run locally only | Phase 9 |
 
 ## Current blockers

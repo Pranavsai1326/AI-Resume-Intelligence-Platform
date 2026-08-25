@@ -16,10 +16,12 @@ cleanup, authoritative TTL expiry, a periodic janitor sweep, and a startup sweep
 
 ## Status
 
-**Phase 3 complete** — a resume can now be uploaded and analyzed end to end, in the browser: six
-explainable health scores (ATS compatibility, content quality, experience quality, skills
-coverage, formatting, impact), every one backed by concrete evidence, computed entirely
-deterministically (no LLM, no external dependency). Phase 4 (job matching) is next.
+**Phase 4 complete** — paste a job description and a just-analyzed resume is now matched against
+it: six explainable components (required/preferred skills, experience, education, project and
+semantic relevance) plus a Strong/Moderate/Missing/Insufficient-Evidence skill-gap breakdown.
+Semantic matching runs on local embeddings (fastembed, ADR-0005) — no API key, nothing leaves the
+server — and degrades honestly if the model can't load rather than faking a score. Phase 5
+(resume builder, and the first LLM-backed features) is next.
 See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Running it locally

@@ -138,6 +138,11 @@ These are product requirements, not optional extras:
 12. An uploaded resume's content never reaches durable storage, is destroyed with its session,
     never appears in logs (including the original filename), and one session cannot fetch
     another's uploaded document (`backend/tests/privacy/test_document_privacy.py`).
+13. A job description and a computed match result carry no content into logs, are destroyed with
+    their session, and one session cannot read another's job or match
+    (`backend/tests/privacy/test_matching_privacy.py`). Embedding vectors computed during
+    matching are never persisted anywhere, session-scoped or otherwise (AI_ARCHITECTURE.md
+    section 8) - there is nothing to test for their absence beyond the response itself.
 
 ## 11. What we tell users — and what we refuse to claim
 

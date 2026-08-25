@@ -177,35 +177,68 @@ Analyzing a document uploaded with `kind=job_description` (no structured resume)
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/jobs` | Create a JD from pasted text or an uploaded `document_id`. Extracts title, requirements split into `required` / `preferred` / `optional`, experience and education thresholds, certifications, responsibilities, soft skills — each with its source span. |
-| `GET` | `/v1/jobs/{id}` | Parsed JD. |
-| `PATCH` | `/v1/jobs/{id}/requirements/{req_id}` | Correct a requirement's importance or text (user override wins over extraction). |
+| `POST` | `/v1/jobs` | Body `{"text": "..."}` (pasted) or `{"document_id": "..."}` (a document uploaded via `/v1/documents` with `kind=job_description`) — exactly one. Extracts title, requirements split into `required` / `preferred` / `optional`, and each requirement's kind (`skill`, `soft_skill`, `experience`, `education`, `certification`, `responsibility`). |
+| `GET` | `/v1/jobs/{job_id}` | The parsed job description. |
+
+A requirement carries `min_years` (for `kind=experience`), `education_level` (for
+`kind=education`, one of `none`/`associate`/`bachelor`/`master`/`phd`), and `keywords` — taxonomy
+skills recognised in its text, used as the matching key. A requirement mentioning something
+outside the recognised skill list keeps `keywords: []` and its full text, rather than being
+dropped; the match endpoint reports these as "could not be automatically verified" instead of
+silently marking them missed. Editing a parsed requirement (`PATCH`) is not implemented -
+tracked as Resume Builder–adjacent follow-up work, not required for matching itself.
 
 ## Matching
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/match` | Body `{resume_version_id?, job_id, profile?}`. Returns `overall` plus component scores, matched/missing requirements with evidence, and an explanation. |
-| `POST` | `/v1/match/gaps` | Skill gap analysis: `strong` / `moderate` / `missing` / `insufficient_evidence` with evidence spans and role-tied learning priorities. |
-| `GET` | `/v1/match/profiles` | Available scoring profiles and their weights. |
+| `POST` | `/v1/match` | Body `{"document_id": "...", "job_id": "..."}`. Computes all six match components plus the skill-gap breakdown in one pass and caches the result per `(document_id, job_id)` pair. |
 
-Example response shape:
+A separate gap-analysis endpoint was sketched in Phase 0 but not built: gap analysis reuses the
+exact same deterministic checks the component scores already compute, so a second request would
+only do that work twice.
+
+Response shape:
 
 ```json
 {
-  "overall": 88,
+  "overall": 74.5,
   "components": {
-    "required_skills":   { "score": 94, "weight": 0.40, "evidence": [] },
-    "preferred_skills":  { "score": 72, "weight": 0.15, "evidence": [] },
-    "experience":        { "score": 91, "weight": 0.20, "evidence": [] },
-    "education":         { "score": 100, "weight": 0.05, "evidence": [] },
-    "project_relevance": { "score": 86, "weight": 0.10, "evidence": [] },
-    "semantic_relevance":{ "score": 79, "weight": 0.10, "evidence": [] }
+    "required_skills":    { "score": 66.7, "weight": 0.40, "available": true, "evidence": [], "explanation": "..." },
+    "preferred_skills":   { "score": 50.0, "weight": 0.15, "available": true, "evidence": [], "explanation": "..." },
+    "experience":         { "score": 100.0, "weight": 0.20, "available": true, "evidence": [], "explanation": "..." },
+    "education":          { "score": 100.0, "weight": 0.05, "available": true, "evidence": [], "explanation": "..." },
+    "project_relevance":  { "score": 58.4, "weight": 0.10, "available": true, "evidence": [], "explanation": "..." },
+    "semantic_relevance": { "score": 94.8, "weight": 0.10, "available": true, "evidence": [], "explanation": "..." }
   },
   "degraded": [],
-  "methodology": { "profile": "default", "version": "1.0.0" }
+  "methodology": { "profile": "default", "version": "1.0.0" },
+  "skill_gaps": {
+    "semantic_available": true,
+    "entries": [
+      {
+        "skill": "kubernetes", "requirement_text": "Experience with Kubernetes and AWS",
+        "importance": "required", "bucket": "strong",
+        "evidence": "\"kubernetes\" is listed in your skills and demonstrated in your experience."
+      }
+    ]
+  }
 }
 ```
+
+`required_skills` and `preferred_skills` compare each requirement's recognised keywords against
+the resume's skills section and experience bullets (word-boundary matching, not substring — see
+ARCHITECTURE.md section 7 for why that distinction matters). `experience` and `education` compare
+the job's stated thresholds against the resume's total role duration and highest detected
+education level; a job that states no threshold scores 100 with an informational note rather than
+being treated as unmet. `project_relevance` and `semantic_relevance` need the embedding provider
+(`EMBEDDING_BACKEND=fastembed` by default, ADR-0005) — when it is unavailable, both report
+`"available": false`, appear in `degraded`, and the remaining four weights are renormalised to
+sum to 1.0 (`ComponentScore.weight` always reflects the share actually used, not the raw config
+value). `skill_gaps.semantic_available` mirrors the same fact for the gap breakdown: without
+embeddings, every unmatched skill lands in `missing` rather than the finer-grained
+`insufficient_evidence` bucket, which needs semantic similarity to distinguish "no evidence at
+all" from "something plausibly related is listed."
 
 ## AI assistance
 

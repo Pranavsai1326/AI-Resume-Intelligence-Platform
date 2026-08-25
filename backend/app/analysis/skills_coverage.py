@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from app.analysis.models import ComponentScore, Evidence, EvidenceSeverity
 from app.analysis.scoring_utils import clamp_score
-from app.analysis.taxonomy import COMMON_SKILLS
+from app.analysis.taxonomy import COMMON_SKILLS, contains_skill_mention
 from app.analysis.text_metrics import bullets_of
 from app.resume.models import Resume
 
@@ -79,9 +79,9 @@ def score_skills_coverage(resume: Resume, weight: float) -> ComponentScore:
             )
         )
 
-    experience_text = " ".join(bullets_of(resume)).lower()
+    experience_text = " ".join(bullets_of(resume))
     if all_skills and experience_text:
-        grounded = [s for s in all_skills if s.strip().lower() in experience_text]
+        grounded = [s for s in all_skills if contains_skill_mention(experience_text, s)]
         ratio = len(grounded) / len(all_skills)
         score += ratio * 20
         if ratio >= 0.3:

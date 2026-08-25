@@ -1,25 +1,26 @@
 import { ComponentScoreList, overallBand } from "@/components/analysis/component-score-list";
+import { SkillGapPanel } from "@/components/matching/skill-gap-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import type { ResumeHealthResult } from "@/lib/api-client";
+import type { JobMatchResult } from "@/lib/api-client";
 
 const COMPONENT_ORDER = [
-  "ats_compatibility",
-  "content_quality",
-  "experience_quality",
-  "skills_coverage",
-  "formatting",
-  "impact",
+  "required_skills",
+  "preferred_skills",
+  "experience",
+  "education",
+  "project_relevance",
+  "semantic_relevance",
 ];
 
-export function HealthReport({ result }: { result: ResumeHealthResult }) {
+export function JobMatchReport({ result }: { result: JobMatchResult }) {
   const band = overallBand(result.overall);
 
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Resume Health</CardTitle>
+          <CardTitle>Job Match</CardTitle>
         </CardHeader>
         <CardContent className="flex items-center gap-6">
           <div className="text-5xl font-semibold tabular-nums text-ink">
@@ -28,7 +29,7 @@ export function HealthReport({ result }: { result: ResumeHealthResult }) {
           <div>
             <p className={cn("font-medium", band.className)}>{band.label}</p>
             <p className="text-sm text-ink-subtle">
-              Weighted across all six components below (methodology:{" "}
+              Weighted across the components below (methodology:{" "}
               {result.methodology.profile ?? "default"} v{result.methodology.version ?? "1.0.0"})
             </p>
           </div>
@@ -37,12 +38,15 @@ export function HealthReport({ result }: { result: ResumeHealthResult }) {
 
       {result.degraded.length > 0 ? (
         <p className="text-sm text-ink-subtle">
-          Some components could not be computed and were excluded from the overall score:{" "}
-          {result.degraded.join(", ")}.
+          Semantic matching is not configured on this deployment, so{" "}
+          {result.degraded.map((k) => k.replace(/_/g, " ")).join(" and ")} were excluded from the
+          overall score and the remaining weights were redistributed.
         </p>
       ) : null}
 
       <ComponentScoreList components={result.components} order={COMPONENT_ORDER} />
+
+      <SkillGapPanel result={result.skill_gaps} />
     </div>
   );
 }

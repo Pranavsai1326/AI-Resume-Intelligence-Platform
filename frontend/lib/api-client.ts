@@ -141,6 +141,60 @@ export interface ResumeHealthResult {
   methodology: Record<string, string>;
 }
 
+export type RequirementImportance = "required" | "preferred" | "optional";
+export type RequirementKind =
+  | "skill"
+  | "soft_skill"
+  | "experience"
+  | "education"
+  | "certification"
+  | "responsibility";
+export type EducationLevel = "none" | "associate" | "bachelor" | "master" | "phd";
+
+export interface Requirement {
+  text: string;
+  kind: RequirementKind;
+  importance: RequirementImportance;
+  keywords: string[];
+  min_years: number | null;
+  education_level: EducationLevel | null;
+}
+
+export interface JobDescription {
+  title: string | null;
+  requirements: Requirement[];
+  responsibilities: string[];
+  raw_text: string;
+}
+
+export interface CreateJobResponse {
+  job_id: string;
+  job: JobDescription;
+}
+
+export type SkillGapBucket = "strong" | "moderate" | "missing" | "insufficient_evidence";
+
+export interface SkillGapEntry {
+  skill: string;
+  requirement_text: string;
+  importance: RequirementImportance;
+  bucket: SkillGapBucket;
+  evidence: string;
+}
+
+export interface SkillGapResult {
+  entries: SkillGapEntry[];
+  semantic_available: boolean;
+}
+
+export interface JobMatchResult {
+  overall: number;
+  components: Record<string, ComponentScore>;
+  degraded: string[];
+  methodology: Record<string, string>;
+  skill_gaps: SkillGapResult;
+}
+
 interface RequestOptions {
   method?: string;
   body?: unknown;
@@ -267,6 +321,17 @@ export const api = {
 
   deleteDocument: (documentId: string, sessionId: string) =>
     apiRequest<void>(`/v1/documents/${documentId}`, { method: "DELETE", sessionId }),
+
+  createJobFromText: (text: string, sessionId: string, signal?: AbortSignal) =>
+    apiRequest<CreateJobResponse>("/v1/jobs", { method: "POST", body: { text }, sessionId, signal }),
+
+  matchResumeToJob: (documentId: string, jobId: string, sessionId: string, signal?: AbortSignal) =>
+    apiRequest<JobMatchResult>("/v1/match", {
+      method: "POST",
+      body: { document_id: documentId, job_id: jobId },
+      sessionId,
+      signal,
+    }),
 };
 
 /**

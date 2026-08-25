@@ -52,25 +52,26 @@ See [ADR-0003](docs/adr/0003-no-application-database.md).
 backend/
   app/
     main.py  config.py  logging.py
-    api/v1/        session documents [resume analysis jobs match tailor letters
+    api/v1/        session documents analysis jobs match [resume tailor letters
                    interview screening export] health
     core/          errors middleware ratelimit clock deps
     sessions/      store.py memory.py redis_store.py manager.py models.py janitor.py
-    documents/     upload.py tempfile_scope.py sections.py structure.py
-                   extract/{base,pdf,docx,txt,ocr}.py
+    documents/     upload.py tempfile_scope.py storage.py sections.py structure.py
+                   heading_split.py extract/{base,pdf,docx,txt,ocr}.py
     resume/        models.py provenance.py
-    analysis/       ats.py formatting.py content_quality.py skills_coverage.py
+    analysis/      ats.py formatting.py content_quality.py skills_coverage.py
                    experience_quality.py impact.py engine.py config.py
                    models.py taxonomy.py text_metrics.py scoring_utils.py
-    [jobs/          parse.py requirements.py]
-    [matching/      deterministic.py semantic.py gaps.py engine.py]
-    [scoring/       config.py engine.py explain.py]
-    [ai/            service.py prompts/ providers/ embeddings/ guards/]
+    jobs/          models.py parse.py education.py
+    matching/      deterministic.py semantic.py gaps.py engine.py
+                   embeddings.py config.py models.py
+    [ai/            service.py prompts/ providers/ guards/]  # LLM only (Phase 5+) - local
+                                                               # embeddings already live in
+                                                               # matching/embeddings.py (ADR-0005)
     [screening/     pipeline.py redact.py rank.py compare.py]
     [queue/         base.py inprocess.py arq_queue.py]
     [export/        pdf.py docx.py reports.py templates/]
-    [taxonomy/      skills.py data/]
-  tests/           unit/ integration/ privacy/ e2e/  fixtures.py
+  tests/           unit/ integration/ privacy/ e2e/  fixtures.py  matching_fakes.py
 frontend/
   app/  components/  lib/  stores/  hooks/  tests/
 docs/adr/
@@ -83,7 +84,16 @@ section detection, and the provenance-tagged structured-resume builder. `analysi
 six independently-scored components (`ats.py`, `content_quality.py`, `experience_quality.py`,
 `skills_coverage.py`, `formatting.py`, `impact.py`) sharing `text_metrics.py` (bullet/verb/
 quantification detection) and `taxonomy.py` (curated word lists), orchestrated by `engine.py`
-against the weights in `config.py`. Rule: no source file over ~400 lines. A module that outgrows
+against the weights in `config.py`. `jobs/` and `matching/` hold Phase 4: deterministic JD
+parsing (`jobs/parse.py`, sharing `documents/heading_split.py`'s generic header-splitting
+algorithm with resume section detection), the local embedding provider (`matching/embeddings.py`,
+ADR-0005), four deterministic and two semantic match components, and skill-gap analysis
+(`matching/gaps.py`). The originally-planned single `scoring/` module never materialised as a
+separate package - each domain (`analysis/`, `matching/`) keeps its own `config.py` /
+`engine.py`, sharing only the actually-common piece,
+`analysis/scoring_utils.apply_degrade_and_renormalize`, since a resume-health profile and a
+match profile have entirely different component sets and no other logic to share. Rule: no
+source file over ~400 lines. A module that outgrows
 it is split by responsibility.
 
 ## 4. Session model

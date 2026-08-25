@@ -15,6 +15,7 @@ dependencies = [
     "python-docx>=1.1",
     "defusedxml>=0.7",
     "chardet>=5.2",
+    "fastembed>=0.7",
 ]
 
 [project.optional-dependencies]
@@ -56,8 +57,12 @@ ignore = [
     # Resume text and date-range parsing deliberately matches Unicode en/em dashes ("2020 – 2021")
     # alongside the hyphen - these are not accidental confusable characters.
     "RUF001",
-    # Kept as classic typing.Generic[T] rather than PEP 695 syntax for Pydantic v2 compatibility.
+    # Kept as classic typing.Generic[T]/TypeVar rather than PEP 695 syntax: UP046 is about
+    # Pydantic v2 compatibility for model classes, UP047 keeps plain generic functions
+    # consistent with those same classes within a module (app.documents.heading_split mixes
+    # a generic dataclass and generic functions over the same type parameter).
     "UP046",
+    "UP047",
 ]
 
 [tool.ruff.lint.per-file-ignores]

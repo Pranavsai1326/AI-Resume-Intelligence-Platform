@@ -4,6 +4,7 @@ import * as React from "react";
 import { AlertCircle, FileText, Loader2, RotateCcw, Sparkles, Upload } from "lucide-react";
 
 import { HealthReport } from "@/components/analysis/health-report";
+import { JobMatchPanel } from "@/components/matching/job-match-panel";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -86,20 +87,32 @@ export function ResumeAnalyzer({ sessionId }: { sessionId: string }) {
     if (file) void handleFile(file);
   };
 
-  if (status === "analyzed" && result) {
+  if (status === "analyzed" && result && upload) {
     return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="flex items-center gap-2 text-sm text-ink-muted">
-            <FileText aria-hidden className="size-4" />
-            {fileName}
-          </p>
-          <Button variant="ghost" size="sm" onClick={reset}>
-            <RotateCcw aria-hidden />
-            Analyze a different resume
-          </Button>
+      <div className="space-y-8">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="flex items-center gap-2 text-sm text-ink-muted">
+              <FileText aria-hidden className="size-4" />
+              {fileName}
+            </p>
+            <Button variant="ghost" size="sm" onClick={reset}>
+              <RotateCcw aria-hidden />
+              Analyze a different resume
+            </Button>
+          </div>
+          <HealthReport result={result} />
         </div>
-        <HealthReport result={result} />
+
+        <div>
+          <h3 className="text-lg font-semibold text-ink">Match against a job</h3>
+          <p className="mt-1 text-sm text-ink-muted">
+            Optional - see how this resume scores against a specific role.
+          </p>
+          <div className="mt-4">
+            <JobMatchPanel documentId={upload.document_id} sessionId={sessionId} />
+          </div>
+        </div>
       </div>
     );
   }

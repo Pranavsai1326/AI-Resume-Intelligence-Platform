@@ -8,6 +8,10 @@ never to penalise a bullet for using a verb the list happens not to contain.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
+from functools import lru_cache
+
 #: Verbs that lead a resume bullet clearly and directly ("Led the migration...").
 ACTION_VERBS = frozenset(
     {
@@ -58,9 +62,44 @@ COMMON_SKILLS = frozenset(
         # data
         "postgresql", "mysql", "mongodb", "redis", "elasticsearch", "kafka", "spark", "airflow",
         "snowflake", "bigquery",
-        # practice / soft skills
-        "agile", "scrum", "product management", "project management", "leadership",
-        "communication", "stakeholder management", "cross-functional collaboration",
-        "mentoring", "public speaking", "technical writing",
+        # practice
+        "agile", "scrum", "product management", "project management", "technical writing",
     }
 )
+
+#: Non-technical skills, kept separate from COMMON_SKILLS so "leadership" or "communication"
+#: is never conflated with a technical/tooling skill by a caller that only wants one or the
+#: other (app.jobs.parse classifies a requirement as SOFT_SKILL vs SKILL using this split).
+SOFT_SKILLS = frozenset(
+    {
+        "communication", "leadership", "teamwork", "collaboration", "problem-solving",
+        "problem solving", "adaptability", "time management", "critical thinking",
+        "attention to detail", "interpersonal skills", "stakeholder management",
+        "cross-functional collaboration", "mentoring", "public speaking",
+    }
+)
+
+
+@lru_cache(maxsize=4096)
+def _mention_pattern(skill: str) -> re.Pattern[str]:
+    """A regex matching ``skill`` as a whole token, not merely as a substring.
+
+    Naive ``skill in text`` matching is wrong for anything short: "r" (the language) matches
+    inside "your", "were", "programmer"; "go" matches inside "google", "algorithm". Word
+    boundaries via lookaround (rather than ``\\b``) so symbol-containing skills like "c++" and
+    "ci/cd" are still bounded correctly - ``\\b`` does not behave usefully around punctuation.
+    """
+    escaped = re.escape(skill.strip().lower())
+    return re.compile(rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])", re.IGNORECASE)
+
+
+def contains_skill_mention(text: str, skill: str) -> bool:
+    """Whether ``skill`` appears in ``text`` as a whole token, case-insensitively."""
+    if not skill.strip():
+        return False
+    return bool(_mention_pattern(skill).search(text))
+
+
+def find_skills_in_text(text: str, skills: Iterable[str]) -> list[str]:
+    """Every skill from ``skills`` that appears in ``text`` as a whole token."""
+    return [skill for skill in skills if contains_skill_mention(text, skill)]

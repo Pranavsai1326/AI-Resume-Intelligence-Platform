@@ -90,11 +90,33 @@ def test_cors_origins_parsed_from_csv() -> None:
 
 
 def test_capabilities_are_honest_without_providers() -> None:
-    """With nothing configured, every AI capability reports false - no pretending."""
+    """With no LLM key and no Redis configured, those capabilities report false - no pretending.
+
+    Embeddings are excluded here: unlike the LLM, local embeddings need no credential (ADR-0005)
+    and default on, so their capability value reflects whether the package is actually
+    importable in this environment, not "nothing configured" - see
+    test_embeddings_capability_reflects_package_presence below.
+    """
     capabilities = Settings(app_env="development").capabilities()
     assert capabilities["llm"] is False
-    assert capabilities["embeddings"] is False
     assert capabilities["redis"] is False
+
+
+def test_embeddings_capability_off_when_backend_is_none() -> None:
+    capabilities = Settings(app_env="development", embedding_backend="none").capabilities()
+    assert capabilities["embeddings"] is False
+
+
+def test_embeddings_capability_reflects_package_presence() -> None:
+    """Reports whether the fastembed package can be imported - a fast, honest precondition.
+
+    Whether the model can actually *load* (network, disk) is checked lazily by the provider
+    itself when a match is requested, not here (see app.matching.embeddings).
+    """
+    from importlib.util import find_spec
+
+    capabilities = Settings(app_env="development", embedding_backend="fastembed").capabilities()
+    assert capabilities["embeddings"] == (find_spec("fastembed") is not None)
 
 
 def test_llm_capability_requires_key_not_just_provider() -> None:

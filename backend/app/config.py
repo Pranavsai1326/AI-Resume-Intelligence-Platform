@@ -82,7 +82,10 @@ class Settings(BaseSettings):
     llm_model_reasoning: str = "claude-sonnet-5"
     llm_model_bulk: str = "claude-haiku-4-5-20251001"
     llm_timeout_seconds: int = Field(default=60, ge=1)
-    embedding_backend: Literal["none", "fastembed", "remote"] = "none"
+    #: "fastembed" by default (ADR-0005: local ONNX, no API key, resume text stays server-side).
+    #: Falls back honestly if the package or model cannot load - see
+    #: app.matching.embeddings.FastEmbedProvider - rather than requiring this to be flipped on.
+    embedding_backend: Literal["none", "fastembed", "remote"] = "fastembed"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
 
     # -- Document processing (Phase 2) ---------------------------------------------------
@@ -130,7 +133,7 @@ class Settings(BaseSettings):
         """
         return {
             "llm": self.llm_provider != "null" and bool(self.anthropic_api_key),
-            "embeddings": self.embedding_backend != "none",
+            "embeddings": self._embeddings_importable(),
             "ocr": self.ocr_enabled and self._tesseract_available(),
             "pdf_export": self._playwright_available(),
             "redis": self.session_store_backend == "redis",
@@ -140,6 +143,22 @@ class Settings(BaseSettings):
         if self.tesseract_cmd:
             return Path(self.tesseract_cmd).exists()
         return shutil.which("tesseract") is not None
+
+    def _embeddings_importable(self) -> bool:
+        """Package-presence check only - fast enough for a health probe.
+
+        Whether the model actually *loads* (first-run download, disk space) is checked lazily by
+        the provider itself when a match is actually requested; that is the authoritative signal,
+        reflected per-request via a component's own ``available`` flag. This is a necessary-but-
+        not-sufficient precondition, same spirit as the Tesseract binary-presence check above.
+        """
+        if self.embedding_backend == "none":
+            return False
+        if self.embedding_backend == "fastembed":
+            from importlib.util import find_spec
+
+            return find_spec("fastembed") is not None
+        return True  # "remote": availability depends on runtime credentials, not checked here
 
     @staticmethod
     def _playwright_available() -> bool:
