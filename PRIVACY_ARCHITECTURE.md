@@ -1,6 +1,6 @@
 # PRIVACY ARCHITECTURE
 
-**Last updated:** 2026-08-22
+**Last updated:** 2026-08-25
 
 Privacy here is an architectural property, not a policy sentence. The guarantee is: *no code path
 exists that writes user content to durable storage.* This document defines that model, the layers
@@ -143,6 +143,15 @@ These are product requirements, not optional extras:
     (`backend/tests/privacy/test_matching_privacy.py`). Embedding vectors computed during
     matching are never persisted anywhere, session-scoped or otherwise (AI_ARCHITECTURE.md
     section 8) - there is nothing to test for their absence beyond the response itself.
+14. Resume versions, AI rewrite/tailor proposals, and exported PDF/DOCX bytes carry no resume
+    content into logs, are destroyed with their session, and one session cannot list, read, or
+    export another session's versions (`backend/tests/privacy/test_resume_builder_privacy.py`).
+    An LLM provider, when configured, receives only the minimum text an operation needs (one
+    bullet or the summary, plus minimal role context — never the whole resume, per
+    AI_ARCHITECTURE.md section 7); provider responses are used to build the returned proposal and
+    then discarded, never separately stored. Exported files are streamed and leave no server-side
+    artefact — the same property verified for exports generally in item 9, re-verified here
+    specifically for the builder's PDF/DOCX endpoint.
 
 ## 11. What we tell users — and what we refuse to claim
 

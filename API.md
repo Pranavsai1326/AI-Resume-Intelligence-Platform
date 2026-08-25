@@ -1,6 +1,6 @@
 # API
 
-**Version:** v1 · **Base path:** `/v1` · **Last updated:** 2026-08-22
+**Version:** v1 · **Base path:** `/v1` · **Last updated:** 2026-08-25
 
 ## Conventions
 
@@ -109,18 +109,33 @@ When a document has no extractable text (e.g. a scanned image saved as PDF) and 
 configured on this deployment, the request fails with `422 NO_EXTRACTABLE_TEXT` — never an empty
 or fabricated resume.
 
-## Resume
+## Resume versions
+
+Built as an explicit **version** model rather than the PUT/PATCH-a-current-resume shape sketched
+in Phase 0: every builder save, AI rewrite acceptance, or tailoring apply creates a new immutable
+`ResumeVersion` (never an in-place mutation), so a before/after comparison across edits is always
+available within the session.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/v1/resume` | Current structured resume with per-field provenance and confidence. |
-| `PUT` | `/v1/resume` | Replace the structured resume (builder saves). Fields default to `USER_PROVIDED`. |
-| `PATCH` | `/v1/resume/sections/{section_id}` | Update or reorder one section. |
-| `GET` | `/v1/resume/versions` | List in-session versions (`original`, `ats_optimized`, named tailored versions). |
-| `POST` | `/v1/resume/versions` | Snapshot the current resume as a named in-session version. |
-| `POST` | `/v1/resume/versions/{id}/restore` | Make a version current. |
+| `GET` | `/v1/resume/versions?document_id=...` | List versions for a document, newest lineage included (`version_id`, `label`, `source`, `created_at`, `based_on_version_id`). The first call for a document lazily creates an `"Original"` version from its extracted resume. |
+| `POST` | `/v1/resume/versions` | Create a new version. Body: `{document_id, label, source?, resume?, based_on_version_id?}` — exactly one of `resume` (a full structured resume, e.g. a builder save) or `based_on_version_id` (branch from an existing version) is required. `source` defaults to `manual_edit`; tailoring's apply step sets it to `ai_tailored`. |
+| `GET` | `/v1/resume/versions/{version_id}` | One version's full structured resume. |
 
-Versions exist only inside the session and disappear with it.
+`source` is one of `original` / `manual_edit` / `ai_tailored`. Versions exist only inside the
+session and disappear with it.
+
+```json
+{
+  "version_id": "a1b2c3d4e5f6a7b8c9d0",
+  "document_id": "18c8897582505bf185fcce96",
+  "label": "Tailored for Acme SRE role",
+  "source": "ai_tailored",
+  "resume": { "...": "full structured Resume" },
+  "created_at": "2026-08-25T10:00:00Z",
+  "based_on_version_id": "0f1e2d3c4b5a69788796"
+}
+```
 
 ## Analysis
 
@@ -244,14 +259,30 @@ all" from "something plausibly related is listed."
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/ai/rewrite` | Improve one bullet/summary/description. Returns proposals with before/after diff and fact-guard findings. Never mutates the resume. |
-| `POST` | `/v1/ai/tailor` | Tailoring proposals for a `job_id`: per-change rationale, diff, and guard status. Applying is a separate explicit call. |
-| `POST` | `/v1/ai/tailor/apply` | Apply selected proposals, creating a new in-session version. |
-| `POST` | `/v1/cover-letter` | Generate a cover letter grounded in session facts. |
-| `POST` | `/v1/interview/questions` | Interview preparation set with a "why this is asked" rationale per question, traced to a resume or JD span. |
+| `POST` | `/v1/ai/rewrite` | Improve one bullet or summary. Body: `{document_id, kind: "bullet"\|"summary", text}`. Returns a proposal — never mutates the resume; the caller saves the accepted result via `POST /v1/resume/versions`. |
+| `POST` | `/v1/tailor` | Tailoring proposals for a `job_id` against a resume version. Body: `{document_id, job_id, version_id?}`. Returns a list of proposals: deterministic (skill reordering, required-skill reminders — always available) plus AI-assisted bullet rewrites (needs a configured LLM, capped at 3 bullets per generation). |
+| `POST` | `/v1/tailor/apply` | Apply only the proposals the user accepted. Body: `{document_id, version_id?, label, proposals}`. Creates a new `source: "ai_tailored"` resume version; does not mutate any existing version. |
 
-When no LLM provider is configured these return `503` with `code: AI_UNAVAILABLE` and a
-user-readable message. They never return fabricated content.
+`POST /v1/cover-letter` and `POST /v1/interview/questions` are Phase 6 work, not yet built.
+
+`POST /v1/ai/rewrite`'s response shape (also used internally by tailoring's per-bullet proposals):
+
+```json
+{
+  "before": "Built the billing service.",
+  "after": "Migrated the billing pipeline to event sourcing, cutting reconciliation time in half.",
+  "fact_guard_findings": [],
+  "available": true,
+  "unavailable_reason": null
+}
+```
+
+With no LLM provider configured, `available` is `false` and `after` is `null` — an honest
+unavailable state (`"unavailable_reason": "AI writing is not configured on this deployment."`),
+returned with `200`, never a fabricated rewrite and never an error that looks like a bug.
+`fact_guard_findings` lists any number, organisation, or technology in the generated text that
+does not appear anywhere in the user's own resume content (AI_ARCHITECTURE.md section 5) — surfaced
+to the user, never silently dropped or silently trusted.
 
 ## Recruiter screening
 
@@ -272,11 +303,19 @@ attributes were removed before scoring. Ranking never exposes an unexplained num
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/export/resume` | `{format: "pdf"\|"docx", version_id, template_id}` → streamed document. |
-| `POST` | `/v1/export/report` | `{type: "analysis"\|"match"\|"screening", ...}` → streamed PDF report. |
+| `POST` | `/v1/export` | Body: `{document_id, version_id?, format: "pdf"\|"docx"}` → streamed document (`application/pdf` or `application/vnd.openxmlformats-officedocument.wordprocessingml.document`). |
 
-Exports are rendered in memory and streamed with `Content-Disposition: attachment`. No download URL
-outlives the response; nothing is written to a server export directory.
+`/v1/export/report` (analysis/match/screening report export) is not yet built — Phase 7 concern,
+once recruiter screening exists.
+
+PDF is rendered by headless Chromium from a shared HTML/CSS template (ADR-0006); DOCX by
+python-docx's object API. Both are rendered in memory and streamed with `Content-Disposition:
+attachment; filename="..."` — no download URL outlives the response, nothing is written to a
+server export directory. The filename is derived from the version's label reduced to an
+`[A-Za-z0-9-]` allowlist (never the raw label), which rules out both path traversal and
+`Content-Disposition` header injection. If Chromium isn't available on the deployment, PDF export
+returns `503 SERVICE_UNAVAILABLE` rather than a broken or empty file; DOCX has no such external
+dependency and is always available.
 
 ## Health
 

@@ -10,6 +10,14 @@ from __future__ import annotations
 import io
 import zipfile
 
+from app.resume.models import (
+    ContactInfo,
+    ExperienceEntry,
+    Resume,
+    SkillGroup,
+)
+from app.resume.provenance import Provenance, ProvenancedValue
+
 SYNTHETIC_RESUME_TEXT = """Jordan Ellery Vance
 jordan.vance@example-fixture.test | (415) 555-0139
 San Francisco, CA
@@ -180,3 +188,42 @@ def make_random_binary_bytes(size: int = 256) -> bytes:
     import os
 
     return os.urandom(size)
+
+
+def make_resume(
+    *, summary: str = "Backend engineer with 6 years building distributed systems."
+) -> Resume:
+    """A small structured resume for unit tests that need a ``Resume`` directly (no extraction)."""
+    extracted = Provenance.extracted(confidence=0.9)
+    return Resume(
+        contact=ContactInfo(
+            full_name=ProvenancedValue(value="Jordan Ellery Vance", provenance=extracted),
+            email=ProvenancedValue(value="jordan.vance@example-fixture.test", provenance=extracted),
+        ),
+        summary=ProvenancedValue(value=summary, provenance=extracted) if summary else None,
+        experience=[
+            ProvenancedValue(
+                value=ExperienceEntry(
+                    title="Senior Backend Engineer",
+                    organization="Cascade Systems",
+                    bullets=[
+                        "Migrated the billing pipeline to event sourcing",
+                        "Reduced latency by tuning the query planner",
+                    ],
+                ),
+                provenance=extracted,
+            )
+        ],
+        skills=[
+            ProvenancedValue(
+                value=SkillGroup(category="Languages", skills=["Python", "Go", "TypeScript"]),
+                provenance=extracted,
+            ),
+            ProvenancedValue(
+                value=SkillGroup(
+                    category="Infrastructure", skills=["Kubernetes", "Terraform", "AWS"]
+                ),
+                provenance=extracted,
+            ),
+        ],
+    )

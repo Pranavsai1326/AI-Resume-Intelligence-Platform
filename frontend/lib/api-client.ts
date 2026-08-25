@@ -195,6 +195,139 @@ export interface JobMatchResult {
   skill_gaps: SkillGapResult;
 }
 
+// ---------------------------------------------------------------------------
+// Resume Builder (Phase 5): versions, AI rewriting, tailoring, export.
+// ---------------------------------------------------------------------------
+
+export type ProvenanceKind = "user_provided" | "extracted" | "ai_suggested" | "ai_generated";
+
+export interface Provenance {
+  kind: ProvenanceKind;
+  confidence: number | null;
+  source: { page: number | null; start: number | null; end: number | null } | null;
+}
+
+export interface Provenanced<T> {
+  value: T;
+  provenance: Provenance;
+}
+
+export interface DateRange {
+  raw: string;
+  start: string | null;
+  end: string | null;
+  is_current: boolean;
+}
+
+export interface ContactInfo {
+  full_name: Provenanced<string> | null;
+  email: Provenanced<string> | null;
+  phone: Provenanced<string> | null;
+  location: Provenanced<string> | null;
+  links: Provenanced<string>[];
+}
+
+export interface ExperienceEntry {
+  title: string;
+  organization: string;
+  location: string | null;
+  dates: DateRange | null;
+  bullets: string[];
+}
+
+export interface EducationEntry {
+  institution: string;
+  degree: string | null;
+  field_of_study: string | null;
+  location: string | null;
+  dates: DateRange | null;
+  details: string[];
+}
+
+export interface ProjectEntry {
+  name: string;
+  description: string | null;
+  bullets: string[];
+  technologies: string[];
+  dates: DateRange | null;
+}
+
+export interface CertificationEntry {
+  name: string;
+  issuer: string | null;
+  date: string | null;
+}
+
+export interface SkillGroup {
+  category: string | null;
+  skills: string[];
+}
+
+export interface CustomSection {
+  title: string;
+  bullets: string[];
+}
+
+export interface Resume {
+  contact: ContactInfo;
+  summary: Provenanced<string> | null;
+  experience: Provenanced<ExperienceEntry>[];
+  education: Provenanced<EducationEntry>[];
+  skills: Provenanced<SkillGroup>[];
+  projects: Provenanced<ProjectEntry>[];
+  certifications: Provenanced<CertificationEntry>[];
+  custom_sections: Provenanced<CustomSection>[];
+}
+
+export type VersionSource = "original" | "manual_edit" | "ai_tailored";
+
+export interface VersionSummary {
+  version_id: string;
+  label: string;
+  source: VersionSource;
+  created_at: string;
+  based_on_version_id: string | null;
+}
+
+export interface ResumeVersion extends VersionSummary {
+  document_id: string;
+  resume: Resume;
+}
+
+export interface RewriteProposal {
+  before: string;
+  after: string | null;
+  fact_guard_findings: string[];
+  available: boolean;
+  unavailable_reason: string | null;
+}
+
+export interface TailorTarget {
+  skill_group_index: number | null;
+  experience_index: number | null;
+  bullet_index: number | null;
+}
+
+export type TailorProposalKind = "reorder_skills" | "skill_reminder" | "bullet_rewrite";
+
+export interface TailorProposal {
+  proposal_id: string;
+  kind: TailorProposalKind;
+  rationale: string;
+  target: TailorTarget;
+  before: string | string[] | null;
+  after: string | string[] | null;
+  fact_guard_findings: string[];
+  requires_ai: boolean;
+}
+
+export type ExportFormat = "pdf" | "docx";
+
+export interface ExportResult {
+  blob: Blob;
+  filename: string;
+}
+
 interface RequestOptions {
   method?: string;
   body?: unknown;
@@ -294,6 +427,48 @@ async function uploadDocument(
   return (await response.json()) as DocumentUploadResponse;
 }
 
+/**
+ * Filename from a `Content-Disposition: attachment; filename="..."` header. Falls back to a
+ * generic name rather than throwing if the header is missing or unparsable - the download still
+ * works, just without a meaningful name.
+ */
+function filenameFromContentDisposition(header: string | null, format: ExportFormat): string {
+  if (!header) return `resume.${format}`;
+  const match = /filename="?([^";]+)"?/i.exec(header);
+  return match?.[1] ?? `resume.${format}`;
+}
+
+async function exportResume(
+  documentId: string,
+  format: ExportFormat,
+  sessionId: string,
+  versionId?: string | null,
+  signal?: AbortSignal,
+): Promise<ExportResult> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/v1/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Session-Id": sessionId },
+      body: JSON.stringify({ document_id: documentId, version_id: versionId ?? null, format }),
+      signal,
+      credentials: "omit",
+      cache: "no-store",
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw NETWORK_ERROR;
+  }
+
+  if (!response.ok) throw await toApiError(response);
+  const blob = await response.blob();
+  const filename = filenameFromContentDisposition(
+    response.headers.get("Content-Disposition"),
+    format,
+  );
+  return { blob, filename };
+}
+
 export const api = {
   createSession: (mode: SessionMode, signal?: AbortSignal) =>
     apiRequest<SessionInfo>("/v1/session", { method: "POST", body: { mode }, signal }),
@@ -332,6 +507,94 @@ export const api = {
       sessionId,
       signal,
     }),
+
+  listResumeVersions: (documentId: string, sessionId: string, signal?: AbortSignal) =>
+    apiRequest<VersionSummary[]>(`/v1/resume/versions?document_id=${encodeURIComponent(documentId)}`, {
+      sessionId,
+      signal,
+    }),
+
+  getResumeVersion: (versionId: string, sessionId: string, signal?: AbortSignal) =>
+    apiRequest<ResumeVersion>(`/v1/resume/versions/${encodeURIComponent(versionId)}`, {
+      sessionId,
+      signal,
+    }),
+
+  saveResumeVersion: (
+    params: {
+      documentId: string;
+      label: string;
+      resume?: Resume;
+      basedOnVersionId?: string | null;
+      source?: VersionSource;
+    },
+    sessionId: string,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<ResumeVersion>("/v1/resume/versions", {
+      method: "POST",
+      body: {
+        document_id: params.documentId,
+        label: params.label,
+        resume: params.resume ?? null,
+        based_on_version_id: params.basedOnVersionId ?? null,
+        source: params.source ?? "manual_edit",
+      },
+      sessionId,
+      signal,
+    }),
+
+  rewriteText: (
+    documentId: string,
+    kind: "bullet" | "summary",
+    text: string,
+    sessionId: string,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<RewriteProposal>("/v1/ai/rewrite", {
+      method: "POST",
+      body: { document_id: documentId, kind, text },
+      sessionId,
+      signal,
+    }),
+
+  generateTailorProposals: (
+    documentId: string,
+    jobId: string,
+    sessionId: string,
+    versionId?: string | null,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<TailorProposal[]>("/v1/tailor", {
+      method: "POST",
+      body: { document_id: documentId, job_id: jobId, version_id: versionId ?? null },
+      sessionId,
+      signal,
+    }),
+
+  applyTailorProposals: (
+    params: {
+      documentId: string;
+      versionId?: string | null;
+      label?: string;
+      proposals: TailorProposal[];
+    },
+    sessionId: string,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<ResumeVersion>("/v1/tailor/apply", {
+      method: "POST",
+      body: {
+        document_id: params.documentId,
+        version_id: params.versionId ?? null,
+        label: params.label ?? "Tailored",
+        proposals: params.proposals,
+      },
+      sessionId,
+      signal,
+    }),
+
+  exportResume,
 };
 
 /**

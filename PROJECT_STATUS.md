@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 4 complete → Phase 5 ready to start
+**Last updated:** 2026-08-25 · **Current phase:** Phase 5 complete → Phase 6 ready to start
 
 > Read this file first in every session, then only the architecture docs relevant to the task.
 > Update it after every meaningful implementation change.
@@ -241,29 +241,82 @@ to "worth confirming" based on Kubernetes/AWS already being listed.
    sections has nothing to anchor on). Documented rather than patched under time pressure this
    late in the phase; tracked below.
 
+### Phase 5 — Resume builder, AI-assisted writing, tailoring, export
+
+**Backend** (`backend/app/resume/`, `backend/app/ai/`, `backend/app/export/`)
+
+| Area | Delivered |
+|---|---|
+| Versioning | Immutable `ResumeVersion` snapshots (`app/resume/versions.py`) — every save is a new version, never an in-place mutation, so before/after is always available. `VersionSource`: `original` / `manual_edit` / `ai_tailored`. Shared session-storage index (`app/resume/version_store.py`) lazily creates an "Original" version from the uploaded document's structured resume the first time it's needed, rather than eagerly at upload time |
+| LLM provider abstraction | `app/ai/providers.py`: `LLMProvider` protocol, `NullLLMProvider` (first-class, not a fallback hack — every call honestly returns unavailable), `AnthropicProvider` (vendor SDK confined here, feature-detected like OCR and embeddings before it). `get_llm_provider(settings)` returns Null unless `LLM_PROVIDER=anthropic` and a key is configured |
+| Prompt registry | `app/ai/prompts.py`: versioned `PromptSpec` records (system prompt, token budgets, temperature) for bullet rewrite, summary rewrite, and tailoring — prompts as data, not inline strings, sharing one explicit anti-invention instruction |
+| Fact guard | `app/ai/fact_guard.py`: builds a `FactIndex` (numbers + notable words) from the user's own resume content and flags any number, organisation, or technology in generated text that doesn't appear in the source — a code-level control, not just a prompt instruction (AI_ARCHITECTURE.md section 5) |
+| AI rewriting | `app/ai/rewrite.py`: `rewrite_bullet` / `rewrite_summary` return a proposal (before/after, fact-guard findings, `available`), never mutate the resume directly |
+| Tailoring | `app/ai/tailor.py`: two layers — deterministic (always available: reorder skill groups so job-relevant skills lead; surface reminders for required skills with no evidence, never auto-added) and AI-assisted (needs a configured LLM: re-emphasise bullets already mentioning a job-relevant keyword, capped at `MAX_BULLET_REWRITES = 3` for token discipline). `apply_proposals` is a separate, explicit step — nothing is applied until the user accepts |
+| Export | `app/export/html_template.py` (shared HTML/CSS template, all content HTML-escaped), `app/export/pdf.py` (headless Chromium via Playwright, ADR-0006, offline browser context, `set_content` never `goto`, returns `None` honestly if Chromium isn't available), `app/export/docx.py` (python-docx object API, no raw XML, no injection surface) |
+| API | `GET/POST /v1/resume/versions`, `GET /v1/resume/versions/{id}`, `POST /v1/ai/rewrite`, `POST /v1/tailor`, `POST /v1/tailor/apply`, `POST /v1/export` (`{document_id, version_id?, format: "pdf"\|"docx"}` → streamed binary with a filename derived from an `[A-Za-z0-9-]` allowlist, never the raw label) |
+
+**Frontend** (`frontend/components/builder/`)
+
+Resume builder UI: `section-editor.tsx` (add/edit/delete per section, plus move-up/move-down
+buttons for reordering — up/down buttons chosen deliberately over drag-and-drop, for simplicity,
+accessibility and no new dependency), `resume-preview.tsx` (live preview as the user edits),
+`version-switcher.tsx` (lists version lineage: label, source, created-at, based-on),
+`ai-rewrite-control.tsx` ("Improve with AI" on the summary and on individual bullets — shows the
+honest "AI writing is not configured on this deployment" state calmly, as an expected state, not
+an error; when available, shows before/after with fact-guard findings surfaced, never hidden),
+`tailor-panel.tsx` (generate proposals against a job, accept/reject each with rationale and
+before/after, apply only the accepted ones), `export-buttons.tsx` (PDF/DOCX, downloads using the
+server's `Content-Disposition` filename). `lib/api-client.ts` extended with typed calls for all
+five new endpoints.
+
+**Verification** — all green:
+
+```
+backend    460 passed, 10 skipped (Redis, no server present)   ruff clean   mypy clean
+frontend   34 passed   eslint clean   tsc --noEmit clean   next build clean
+```
+
+Playwright's Chromium is installed in this environment, so PDF export was verified rendering real
+output (`tests/unit/test_export_pdf.py`), not just mocked — a change from the Phase 4-era
+assumption that it wouldn't be available; `/ready` now reports `pdf_export: true`.
+
+### Defects found and fixed during Phase 5
+
+1. **Fact-guard sentence-initial false positive.** The proper-noun/technology heuristic (a
+   capitalised word not in the source) flagged the first word of every generated sentence, since
+   English capitalises sentence-initial words regardless of whether they're proper nouns — this
+   would have made nearly every AI rewrite trip at least one false warning. Fixed by excluding
+   position-0 matches from the capitalisation signal (digit/symbol-based detection, e.g. "AWS123"
+   or "C++", still applies regardless of position). Verified with a regression test: an honest
+   rewrite produces zero findings; a genuine mid-sentence fabrication is still caught.
+2. **`anthropic` SDK 1.0.0's `messages.create()` does not accept `temperature` as a typed keyword
+   argument** — confirmed via `inspect.signature()` at runtime, not assumed from a stub gap. Fixed
+   by passing it through `extra_body={"temperature": temperature}`, which merges into the raw JSON
+   request body regardless of what the Python wrapper's typed surface exposes; the underlying
+   Messages API has always accepted `temperature` as a top-level field.
+
 ## In progress
 
-Nothing. Phase 4 is committed.
+Nothing. Phase 5 is committed.
 
-## Next task — Phase 5 (resume builder)
+## Next task — Phase 6 (career intelligence)
 
-1. Section editor with live preview, drag/reorder, and templates
-2. AI-assisted writing (summary, bullets) - first real consumer of Layer 3; requires
-   `ANTHROPIC_API_KEY` to do anything beyond report itself honestly unavailable
-3. Resume tailoring: turn Phase 4's skill gaps and match evidence into concrete edit proposals,
-   fact-guarded against the session's own content (AI_ARCHITECTURE.md section 5)
-4. In-session resume versions (original, tailored-per-job, ATS-optimized)
-5. PDF export via headless Chromium (ADR-0006) and DOCX export
-6. Fix the Phase 2 education multi-entry-without-blank-line gap noted above, since the builder
-   is where users will notice a collapsed entry and want to split it
-7. Tests: AI-unavailable fallback tests, fact-guard tests against deliberately hallucinated
-   samples, export rendering tests, API and privacy tests
+1. Cover letter generation grounded in session facts (resume + JD), fact-guarded the same way as
+   tailoring
+2. Interview preparation: question set with a "why this is asked" rationale per question, traced
+   to a resume or JD span
+3. Learning/skill-gap priorities derived from Phase 4's skill-gap buckets
+4. Fix the Phase 2 education multi-entry-without-blank-line gap (still open — see Known Issues);
+   the builder UI shipped in Phase 5 is where a user would notice a collapsed entry, so this is a
+   good point to revisit it
+5. Tests: AI-unavailable fallback, fact-guard catch rate against deliberately hallucinated
+   samples, API and privacy tests for the new endpoints
 
 ## Planned
 
 | Phase | Scope |
 |---|---|
-| 6 | Career intelligence: cover letters, interview prep, learning priorities |
 | 7 | Recruiter screening: bulk async pipeline, extraction, ranking, comparison, shortlist, export |
 | 8 | Production hardening: security, rate limits, retries, performance, monitoring, AI evaluation, cost |
 | 9 | Deployment: environments, CI/CD, health checks, monitoring, smoke tests, DEPLOYMENT.md + TESTING.md |
@@ -304,9 +357,8 @@ No Docker, no Redis, no database and no API key is needed to run any of the abov
 |---|---|---|
 | Redis not installed | Redis backend unexercised locally | 10 conformance tests skip with a clear reason; run them with `TEST_REDIS_URL` set. Memory backend covers development |
 | Tesseract not installed | Scanned/image-only PDFs fail with `422 NO_EXTRACTABLE_TEXT` | Provider abstraction built in Phase 2 (`app.documents.extract.ocr`); feature-detected and reported false by `/ready`, honest error rather than silent failure or fake text |
-| No LLM key | Layer 3 (AI writing, cover letters, interview prep) cannot run | `/ready` reports `llm: false`; needed starting Phase 5. Semantic matching (Phase 4) needed no key and is confirmed working — ADR-0005's bet on local ONNX embeddings paid off |
-| Playwright not installed | PDF export unavailable | Phase 5 concern; `/ready` reports `pdf_export: false` |
-| Education entries without a blank line between them collapse into one | Rare, narrow resume-parsing gap (Phase 2) surfaced by a Phase 4 test | Documented, not yet fixed; queued for Phase 5, where the builder UI is where a user would actually notice and want to split it |
+| No LLM key | Layer 3 (AI writing, tailoring, cover letters, interview prep) cannot run | `/ready` reports `llm: false`. `NullLLMProvider` reports every AI feature honestly unavailable rather than erroring or fabricating; deterministic tailoring (skill reordering, requirement reminders) works with no key at all. Semantic matching (Phase 4) needed no key and is confirmed working — ADR-0005's bet on local ONNX embeddings paid off |
+| Education entries without a blank line between them collapse into one | Rare, narrow resume-parsing gap (Phase 2) surfaced by a Phase 4 test | Still documented, not yet fixed; queued for Phase 6 |
 | No CI pipeline yet | Gates run locally only | Phase 9 |
 
 ## Current blockers

@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-**Last updated:** 2026-08-22 · Companion docs: [PRIVACY_ARCHITECTURE.md](PRIVACY_ARCHITECTURE.md),
+**Last updated:** 2026-08-25 · Companion docs: [PRIVACY_ARCHITECTURE.md](PRIVACY_ARCHITECTURE.md),
 [AI_ARCHITECTURE.md](AI_ARCHITECTURE.md), [SECURITY.md](SECURITY.md), [API.md](API.md)
 
 ## 1. System shape
@@ -52,44 +52,49 @@ See [ADR-0003](docs/adr/0003-no-application-database.md).
 backend/
   app/
     main.py  config.py  logging.py
-    api/v1/        session documents analysis jobs match [resume tailor letters
-                   interview screening export] health
+    api/v1/        session documents analysis jobs match resume ai tailor export
+                   [letters interview screening] health
     core/          errors middleware ratelimit clock deps
     sessions/      store.py memory.py redis_store.py manager.py models.py janitor.py
     documents/     upload.py tempfile_scope.py storage.py sections.py structure.py
                    heading_split.py extract/{base,pdf,docx,txt,ocr}.py
-    resume/        models.py provenance.py
+    resume/        models.py provenance.py versions.py version_store.py
     analysis/      ats.py formatting.py content_quality.py skills_coverage.py
                    experience_quality.py impact.py engine.py config.py
                    models.py taxonomy.py text_metrics.py scoring_utils.py
     jobs/          models.py parse.py education.py
     matching/      deterministic.py semantic.py gaps.py engine.py
                    embeddings.py config.py models.py
-    [ai/            service.py prompts/ providers/ guards/]  # LLM only (Phase 5+) - local
-                                                               # embeddings already live in
-                                                               # matching/embeddings.py (ADR-0005)
+    ai/            providers.py prompts.py fact_guard.py rewrite.py tailor.py
+                   # LLM only (Phase 5) - local embeddings live in matching/embeddings.py (ADR-0005)
+    export/        html_template.py pdf.py docx.py
     [screening/     pipeline.py redact.py rank.py compare.py]
     [queue/         base.py inprocess.py arq_queue.py]
-    [export/        pdf.py docx.py reports.py templates/]
-  tests/           unit/ integration/ privacy/ e2e/  fixtures.py  matching_fakes.py
+  tests/           unit/ integration/ privacy/  fixtures.py  matching_fakes.py  ai_fakes.py
 frontend/
   app/  components/  lib/  stores/  hooks/  tests/
 docs/adr/
 ```
 
 Bracketed paths are planned, not yet built — see PROJECT_STATUS.md for what phase adds each one.
-`documents/` and `resume/` hold Phase 2 code: upload validation and bounded temp storage,
-per-format extraction (PDF via pdfplumber, DOCX via python-docx + defusedxml, TXT), deterministic
-section detection, and the provenance-tagged structured-resume builder. `analysis/` holds Phase 3:
-six independently-scored components (`ats.py`, `content_quality.py`, `experience_quality.py`,
-`skills_coverage.py`, `formatting.py`, `impact.py`) sharing `text_metrics.py` (bullet/verb/
-quantification detection) and `taxonomy.py` (curated word lists), orchestrated by `engine.py`
-against the weights in `config.py`. `jobs/` and `matching/` hold Phase 4: deterministic JD
-parsing (`jobs/parse.py`, sharing `documents/heading_split.py`'s generic header-splitting
-algorithm with resume section detection), the local embedding provider (`matching/embeddings.py`,
-ADR-0005), four deterministic and two semantic match components, and skill-gap analysis
-(`matching/gaps.py`). The originally-planned single `scoring/` module never materialised as a
-separate package - each domain (`analysis/`, `matching/`) keeps its own `config.py` /
+`documents/` and `resume/` hold Phase 2 code plus Phase 5's versioning (`versions.py`,
+`version_store.py`): upload validation and bounded temp storage, per-format extraction (PDF via
+pdfplumber, DOCX via python-docx + defusedxml, TXT), deterministic section detection, the
+provenance-tagged structured-resume builder, and immutable in-session resume snapshots.
+`analysis/` holds Phase 3: six independently-scored components (`ats.py`, `content_quality.py`,
+`experience_quality.py`, `skills_coverage.py`, `formatting.py`, `impact.py`) sharing
+`text_metrics.py` (bullet/verb/quantification detection) and `taxonomy.py` (curated word lists),
+orchestrated by `engine.py` against the weights in `config.py`. `jobs/` and `matching/` hold
+Phase 4: deterministic JD parsing (`jobs/parse.py`, sharing `documents/heading_split.py`'s generic
+header-splitting algorithm with resume section detection), the local embedding provider
+(`matching/embeddings.py`, ADR-0005), four deterministic and two semantic match components, and
+skill-gap analysis (`matching/gaps.py`). `ai/` and `export/` are Phase 5: the LLM provider
+abstraction, prompt registry and fact guard (`ai/providers.py`, `ai/prompts.py`,
+`ai/fact_guard.py`), AI-assisted rewriting and tailoring (`ai/rewrite.py`, `ai/tailor.py`, the
+first real consumers of Layer 3), and PDF/DOCX export (`export/pdf.py` via headless Chromium per
+ADR-0006, `export/docx.py` via python-docx, sharing one HTML template source in
+`export/html_template.py`). The originally-planned single `scoring/` module never materialised as
+a separate package - each domain (`analysis/`, `matching/`) keeps its own `config.py` /
 `engine.py`, sharing only the actually-common piece,
 `analysis/scoring_utils.apply_degrade_and_renormalize`, since a resume-health profile and a
 match profile have entirely different component sets and no other logic to share. Rule: no

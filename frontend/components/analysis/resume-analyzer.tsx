@@ -4,6 +4,7 @@ import * as React from "react";
 import { AlertCircle, FileText, Loader2, RotateCcw, Sparkles, Upload } from "lucide-react";
 
 import { HealthReport } from "@/components/analysis/health-report";
+import { ResumeBuilder } from "@/components/builder/resume-builder";
 import { JobMatchPanel } from "@/components/matching/job-match-panel";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -111,6 +112,17 @@ export function ResumeAnalyzer({ sessionId }: { sessionId: string }) {
           </p>
           <div className="mt-4">
             <JobMatchPanel documentId={upload.document_id} sessionId={sessionId} />
+          </div>
+        </div>
+
+        <div>
+          <h3 className="text-lg font-semibold text-ink">Resume builder</h3>
+          <p className="mt-1 text-sm text-ink-muted">
+            Edit your resume section by section, tailor it to a job with reviewable AI proposals,
+            and export the result - every save creates a new version, so nothing is ever lost.
+          </p>
+          <div className="mt-4">
+            <ResumeBuilder documentId={upload.document_id} sessionId={sessionId} />
           </div>
         </div>
       </div>

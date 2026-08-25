@@ -1,6 +1,6 @@
 # AI ARCHITECTURE
 
-**Last updated:** 2026-08-22
+**Last updated:** 2026-08-25
 
 ## 1. Three layers, in order of preference
 
@@ -30,36 +30,49 @@ ProviderAdapter (LLMProvider | EmbeddingProvider)
 Anthropic | OpenAI-compatible | Null(unavailable)      fastembed(local) | remote
 ```
 
-* `app/ai/providers/` is the only place a vendor SDK is imported. A test asserts no `anthropic` or
-  `openai` import exists elsewhere in the codebase.
-* `NullLLMProvider` is a first-class adapter used when no key is configured: every call returns a
-  structured `AIUnavailable` result, so the UI shows an honest unavailable state instead of failing
-  or faking output.
+* `app/ai/providers.py` is the only place a vendor SDK is imported (as built — a lazy, in-method
+  import inside `AnthropicProvider`, confined behind a `TYPE_CHECKING`-only reference for typing so
+  the SDK need not even be importable at module load time). Every other module reaches the LLM
+  only through the `LLMProvider` protocol.
+* `NullLLMProvider` is a first-class adapter used when no key is configured: every call returns
+  `None`, and the calling code (`app/ai/rewrite.py`, `app/ai/tailor.py`) turns that into an
+  explicit `available: false` result with a human-readable reason, so the UI shows an honest
+  unavailable state instead of failing or faking output.
 * Models are configuration, not literals: `LLM_MODEL_REASONING` (default `claude-sonnet-5`),
   `LLM_MODEL_BULK` (default `claude-haiku-4-5`).
+* Real gotcha worth documenting: the installed `anthropic` SDK's `messages.create()` does not
+  accept `temperature` as a typed keyword argument on this version, though the underlying Messages
+  API accepts it as a top-level JSON field. Passed via `extra_body={"temperature": temperature}`,
+  which merges into the raw request body regardless of what the Python wrapper's stub exposes.
 
 ## 3. Prompt registry
 
-Every prompt is a versioned record: `id`, `version`, `purpose`, `input schema`, `output JSON
-schema`, `max input tokens`, `max output tokens`, `temperature`, `model tier`. Prompts live in
-`app/ai/prompts/` as data, not inline strings scattered through business logic. Changing a prompt
-bumps its version so evaluations stay comparable.
+Every prompt is a versioned, frozen `PromptSpec` record: `system` prompt, `max_input_chars`,
+`max_output_tokens`, `temperature`. Specs live in `app/ai/prompts.py` as data, not inline strings
+scattered through business logic — `REWRITE_BULLET`, `REWRITE_SUMMARY`, `TAILOR_BULLET`, sharing
+one explicit anti-invention instruction string forbidding fabricated numbers, employers,
+technologies, dates, and outcomes. Changing a prompt is a one-line edit to its `PromptSpec`;
+formal prompt versioning (a version string tracked across changes, re-run evaluations per bump) is
+not yet built — see section 10.
 
 ## 4. Structured output and validation
 
-Requests use tool/JSON-schema-constrained output. Every response passes through:
+As built for Phase 5's plain-text outputs (a rewritten bullet, a rewritten summary), the provider
+call is unconstrained text completion, not JSON/tool-schema output — there is no structured field
+to parse or validate beyond the raw string. Every response still passes through:
 
-1. **Parse** — strict JSON parse; on failure, one bounded repair attempt with the parser error fed
-   back, then give up cleanly.
-2. **Schema validate** — Pydantic model; missing/extra/mistyped fields rejected.
-3. **Semantic validate** — enum values in range, scores in bounds, referenced section IDs exist in
-   the session, no requirement IDs invented.
-4. **Fact guard** (§5) — for any generated resume/cover-letter text.
-5. **Fallback** — on unrecoverable failure return a typed `AIUnavailable`/`AIInvalidOutput` with an
-   error category. Never surface raw provider errors or partial JSON to the user.
+1. **Emptiness/failure check** — a provider exception, timeout, or an empty completion is treated
+   identically: the caller gets `available: false` with a specific reason, never a partial or
+   garbled result.
+2. **Fact guard** (§5) — every generated string, before it is ever returned to the client.
+3. **Fallback** — `LLMProvider.complete()` returns `None` on any failure (network, timeout, rate
+   limit, provider 5xx); the raw provider exception is logged (model name and category only, never
+   response content) and never surfaced to the client.
 
-Handled failure modes: invalid JSON, missing fields, hallucinated references, timeout, rate limit,
-provider 5xx, content filter, truncated output, empty completion.
+JSON/tool-schema-constrained output with the fuller parse → schema-validate → semantic-validate
+pipeline originally sketched here is deferred to Phase 6, where cover letters and interview
+questions need genuinely structured multi-field output (a question list with per-item rationale,
+a letter with distinct salutation/body/closing) rather than one plain string.
 
 ## 5. Anti-hallucination system
 
@@ -73,8 +86,15 @@ AI_GENERATED    AI text the user accepted
 ```
 
 Provenance is stored on the field, survives edits, and is visible in the UI. AI never mutates
-content in place: it emits proposals, the user accepts, and accepted text is relabelled
-`AI_GENERATED` with the original retained for the session so before/after is always available.
+content in place: it emits proposals, the user accepts, and the accepted result is saved as a new
+resume version (never an in-place edit) so before/after is always available via version history.
+
+**Known limitation (Phase 5):** the `Resume` model tracks provenance per experience *entry*, not
+per bullet, so an accepted single-bullet AI rewrite cannot currently be labelled `AI_GENERATED` at
+the bullet level — the entry-level provenance stays `EXTRACTED` or `USER_PROVIDED` even after one
+of its bullets was AI-rewritten. Documented in `app/ai/tailor.py::apply_proposals` rather than
+silently gapped; version history (which version a bullet's text came from, and the proposal's
+rationale shown at review time) is the practical substitute until per-bullet provenance exists.
 
 **Fact guard.** Before any generated text is shown it is checked against a session fact index built
 from the user's own content: numbers and percentages, dates and durations, organisation names, job
@@ -155,7 +175,11 @@ bucket (`app/matching/gaps.py`).
 
 ## 10. Evaluation
 
-`backend/tests/ai/` holds a fixture corpus of synthetic resumes and JDs (authored for the project, no
-real personal data) with expected extractions and score bands. Evaluations cover extraction accuracy,
-required/preferred classification, score stability across runs, fact-guard catch rate on deliberately
-hallucinated samples, and schema-validity rate. Prompt version changes re-run the suite.
+As built for Phase 5: `backend/tests/unit/test_fact_guard.py` exercises the guard directly against
+deliberately hallucinated samples (a fabricated number, a fabricated technology, a genuine
+paraphrase that must *not* false-positive) using a `FakeLLMProvider` (`backend/tests/ai_fakes.py`,
+mirroring the `FakeEmbeddingProvider` pattern from Phase 4) rather than live API calls, so the
+suite stays fast, hermetic, and free. A dedicated fixture corpus of synthetic resumes/JDs with
+scored extraction-accuracy and prompt-version-tracked evaluation runs — closer to a proper eval
+harness — is not yet built; tracked as Phase 6+ follow-up once cover letters and interview
+questions give the eval suite more surface worth measuring.

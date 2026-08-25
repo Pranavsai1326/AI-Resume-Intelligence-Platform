@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { AlertCircle, Loader2, Search, Sparkles, Users } from "lucide-react";
+import { AlertCircle, Loader2, Search, Users } from "lucide-react";
 
 import { ResumeAnalyzer } from "@/components/analysis/resume-analyzer";
 import { AppShell } from "@/components/layout/app-shell";
@@ -32,16 +32,10 @@ interface ModuleCard {
   available: boolean;
 }
 
-const CANDIDATE_MODULES: ModuleCard[] = [
-  {
-    key: "match",
-    title: "Job matching and tailoring",
-    description: "Requirement extraction, explained match scoring, skill gaps and tailoring proposals.",
-    icon: Sparkles,
-    phase: "Phase 4-5",
-    available: false,
-  },
-];
+// Job matching, tailoring, and the resume builder (Phase 4-5) are real and render inline in the
+// upload -> analyze flow above rather than as another "not built yet" card - see
+// ResumeAnalyzer / ResumeBuilder.
+const CANDIDATE_MODULES: ModuleCard[] = [];
 
 const RECRUITER_MODULES: ModuleCard[] = [
   {
@@ -168,10 +162,11 @@ export default function WorkspacePage() {
         </div>
 
         <Alert>
-          <AlertTitle>Phase 3 of the build is live</AlertTitle>
+          <AlertTitle>Phase 5 of the build is live</AlertTitle>
           <p className="text-ink-muted">
-            Upload and resume analysis work end to end below. Anything not built yet is listed
-            honestly with its real status — none of it will show you a fabricated result.
+            Upload, resume analysis, job matching, the resume builder, AI-assisted tailoring and
+            export all work end to end below. Anything not built yet is listed honestly with its
+            real status — none of it will show you a fabricated result.
           </p>
         </Alert>
 
@@ -190,6 +185,7 @@ export default function WorkspacePage() {
           </section>
         ) : null}
 
+        {modules.length > 0 ? (
         <section aria-labelledby="modules-heading">
           <h2 id="modules-heading" className="text-lg font-semibold text-ink">
             {info.mode === "candidate" ? "More modules" : "Modules"}
@@ -213,6 +209,7 @@ export default function WorkspacePage() {
             ))}
           </div>
         </section>
+        ) : null}
 
         <section aria-labelledby="capabilities-heading">
           <h2 id="capabilities-heading" className="text-lg font-semibold text-ink">

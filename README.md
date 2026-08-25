@@ -16,12 +16,11 @@ cleanup, authoritative TTL expiry, a periodic janitor sweep, and a startup sweep
 
 ## Status
 
-**Phase 4 complete** — paste a job description and a just-analyzed resume is now matched against
-it: six explainable components (required/preferred skills, experience, education, project and
-semantic relevance) plus a Strong/Moderate/Missing/Insufficient-Evidence skill-gap breakdown.
-Semantic matching runs on local embeddings (fastembed, ADR-0005) — no API key, nothing leaves the
-server — and degrades honestly if the model can't load rather than faking a score. Phase 5
-(resume builder, and the first LLM-backed features) is next.
+**Phase 5 complete** — a full resume builder: section editing with live preview, in-session
+version history, AI-assisted bullet/summary rewriting and job tailoring (the first LLM-backed
+features — honestly reports itself unavailable with no API key configured, and every generated
+line is checked against the user's own resume content before it's ever shown), and PDF/DOCX
+export. Phase 6 (cover letters, interview prep) is next.
 See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Running it locally
