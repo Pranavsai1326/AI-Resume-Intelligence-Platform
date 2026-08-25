@@ -103,6 +103,50 @@ def make_two_column_pdf_bytes() -> bytes:
     return buffer.getvalue()
 
 
+def make_sidebar_resume_pdf_bytes() -> bytes:
+    """A common real-world template: a narrow left sidebar (contact/skills) beside a wider main
+    column (experience) - an asymmetric split a fixed 45-55% centre-band gutter would miss
+    entirely, unlike the roughly-centred split ``make_two_column_pdf_bytes`` produces."""
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen import canvas
+
+    buffer = io.BytesIO()
+    doc = canvas.Canvas(buffer, pagesize=letter)
+    _width, height = letter
+    # Short lines only, wrapped as a real narrow-sidebar template would - a run of text long
+    # enough to cross into the main column's x-range would make the crop boundary slice through
+    # a word instead of landing in real white space, which is a fixture-realism concern here,
+    # not a property of the extraction fix itself.
+    sidebar_lines = [
+        "Jordan Vance",
+        "jordan.vance@",
+        "example.test",
+        "",
+        "SKILLS",
+        "Python",
+        "Go",
+        "Kubernetes",
+    ]
+    main_lines = [
+        "EXPERIENCE",
+        "Senior Backend Engineer",
+        "Cascade Systems",
+        "Jan 2021 - Present",
+        "- Migrated the billing pipeline to event sourcing",
+        "- Reduced latency by tuning the query planner",
+    ]
+    y = height - 72
+    for i in range(max(len(sidebar_lines), len(main_lines))):
+        if i < len(sidebar_lines) and sidebar_lines[i]:
+            doc.drawString(50, y, sidebar_lines[i])
+        if i < len(main_lines) and main_lines[i]:
+            doc.drawString(230, y, main_lines[i])
+        y -= 16
+    doc.showPage()
+    doc.save()
+    return buffer.getvalue()
+
+
 def make_encrypted_pdf_bytes() -> bytes:
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.pdfencrypt import StandardEncryption
@@ -147,6 +191,32 @@ def make_docx_bytes(
         cols = OxmlElement("w:cols")
         cols.set(qn("w:num"), "2")
         sect_pr.append(cols)
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def make_sidebar_table_docx_bytes() -> bytes:
+    """A common real-world DOCX resume template: a borderless 2-column table used as a page
+    layout device (sidebar contact/skills beside a main experience column) - DOCX has no native
+    CSS-style column layout most templates would actually want, so a table is the usual
+    workaround. Deliberately more rows than ``make_docx_bytes``'s small "Skill | Level" data
+    table, which is the signal ``_table_text`` uses to tell the two apart."""
+    from docx import Document
+
+    document = Document()
+    table = document.add_table(rows=4, cols=2)
+    sidebar = ["Jordan Vance", "jordan@example.test", "SKILLS", "Python, Go, Kubernetes"]
+    main = [
+        "EXPERIENCE",
+        "Senior Backend Engineer, Cascade Systems",
+        "Jan 2021 - Present",
+        "- Migrated the billing pipeline to event sourcing",
+    ]
+    for row_index in range(4):
+        table.rows[row_index].cells[0].text = sidebar[row_index]
+        table.rows[row_index].cells[1].text = main[row_index]
 
     buffer = io.BytesIO()
     document.save(buffer)

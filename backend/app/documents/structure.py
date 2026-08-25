@@ -189,14 +189,37 @@ def _strip_dates(header: str, dates: DateRange | None) -> str:
     return header.replace(dates.raw, "").strip(" -|,–—")
 
 
-def _split_header_and_dates(lines: list[str]) -> tuple[str, DateRange | None, list[str]]:
+def _looks_like_subheader_line(line: str) -> bool:
+    """A conservative guess that ``line`` is an organisation/institution name on its own line,
+    not the start of bullet or prose content: short, no bullet marker, no sentence-ending
+    punctuation. A false negative here just leaves the line as an unattributed detail (recoverable
+    - the existing behaviour); a false positive would misfile real content as an organisation
+    name, which is why every condition here errs conservative rather than permissive."""
+    stripped = line.strip()
+    if not stripped or len(stripped) > 60:
+        return False
+    if _BULLET_PREFIX_RE.match(stripped):
+        return False
+    return not stripped.endswith((".", "!", "?"))
+
+
+def _split_header_and_dates(
+    lines: list[str], *, merge_subheader: bool = True
+) -> tuple[str, DateRange | None, list[str]]:
     """Pull the header line and an optional date range out of a block's lines.
 
-    Handles both common layouts: dates on the same line as the title ("Title, Org  Jan 2021 -
-    Present") and dates on their own line directly beneath it ("Title, Org" / newline /
-    "Jan 2021 - Present"). A second line counts as a date line only when the date match covers
-    most of it, so a bullet that merely mentions a year in passing is never mistaken for the
-    entry's date range.
+    Handles three common layouts: dates on the same line as the title ("Title, Org  Jan 2021 -
+    Present"); dates on their own line directly beneath it ("Title, Org" / newline / "Jan 2021 -
+    Present"); and, when ``merge_subheader`` is true, title and organisation on two entirely
+    separate lines with the date on a third ("Title" / "Org" / "Jan 2021 - Present") - common
+    enough in real resume templates (especially narrow-column ones) to be worth the complexity.
+    A second line counts as a date line only when the date match covers most of it, so a bullet
+    that merely mentions a year in passing is never mistaken for the entry's date range.
+
+    ``merge_subheader`` must be false for callers (projects) where a single line straight after
+    the header is legitimately free-text content (a one-line description), not an organisation
+    name - the two are not distinguishable from shape alone, and projects already has a
+    dedicated, correct path for that single line via its bullet/description handling.
     """
     header = lines[0]
     rest = lines[1:]
@@ -207,6 +230,21 @@ def _split_header_and_dates(lines: list[str]) -> tuple[str, DateRange | None, li
         if candidate_dates is not None and len(candidate_dates.raw) >= 0.6 * len(candidate):
             dates = candidate_dates
             rest = rest[1:]
+        elif (
+            merge_subheader
+            and not _split_two(header)[1]
+            and _looks_like_subheader_line(candidate)
+        ):
+            # The header line alone has no title/organisation separator - fold this line in as
+            # the organisation, then check whether a date follows immediately after it too.
+            header = f"{header}, {candidate}"
+            rest = rest[1:]
+            if rest:
+                next_candidate = rest[0].strip()
+                next_dates = parse_date_range(next_candidate)
+                if next_dates is not None and len(next_dates.raw) >= 0.6 * len(next_candidate):
+                    dates = next_dates
+                    rest = rest[1:]
     return header, dates, rest
 
 
@@ -322,7 +360,7 @@ def _parse_projects(body: str) -> list[ProvenancedValue[ProjectEntry]]:
         lines = [line for line in block.split("\n") if line.strip()]
         if not lines:
             continue
-        header, dates, rest = _split_header_and_dates(lines)
+        header, dates, rest = _split_header_and_dates(lines, merge_subheader=False)
         remainder = _strip_dates(header, dates)
 
         technologies: list[str] = []

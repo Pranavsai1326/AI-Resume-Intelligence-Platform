@@ -82,6 +82,66 @@ def test_pdf_style_text_without_blank_lines_still_splits_into_entries() -> None:
     ]
 
 
+def test_title_and_organization_on_separate_lines_are_both_captured() -> None:
+    """Phase 9C regression: a common real-world template puts the job title, organisation, and
+    date range on three entirely separate lines rather than "Title, Org" on one. Before the fix,
+    the organisation was silently dropped (left empty) and both the organisation name and the
+    date range were misfiled as fake bullets instead."""
+    text = (
+        "EXPERIENCE\n"
+        "Senior Backend Engineer\n"
+        "Cascade Systems\n"
+        "Jan 2021 - Present\n"
+        "- Migrated the billing pipeline to event sourcing\n"
+        "- Reduced latency by tuning the query planner\n"
+    )
+    resume = build_resume(text)
+    assert len(resume.experience) == 1
+    entry = resume.experience[0].value
+    assert entry.title == "Senior Backend Engineer"
+    assert entry.organization == "Cascade Systems"
+    assert entry.dates is not None
+    assert entry.dates.is_current is True
+    assert entry.bullets == [
+        "Migrated the billing pipeline to event sourcing",
+        "Reduced latency by tuning the query planner",
+    ]
+
+
+def test_project_single_description_line_is_not_mistaken_for_a_separate_header_line() -> None:
+    """The three-separate-lines fix above must not swallow a project's one-line description into
+    the header - projects deliberately keep that line available as `description`
+    (`merge_subheader=False` in `_parse_projects`), since a lone content line here is common and
+    correctly belongs to `description`/`bullets`, not to a title/organisation split."""
+    text = "PROJECTS\nSide Project\nA single-line description of the project\n"
+    resume = build_resume(text)
+    assert len(resume.projects) == 1
+    assert resume.projects[0].value.name == "Side Project"
+    assert resume.projects[0].value.description == "A single-line description of the project"
+
+
+def test_short_degree_acronym_does_not_truncate_the_education_entry() -> None:
+    """Phase 9C regression: a full end-to-end reproduction of the "MBA" section-detection bug -
+    before the fix, this entry's degree and dates were silently lost entirely because "MBA" alone
+    on its own line was misread as a new section header."""
+    text = (
+        "EDUCATION\n"
+        "State University\n"
+        "Bachelor of Science in Computer Science\n"
+        "2015 - 2019\n"
+        "\n"
+        "Tech Institute\n"
+        "MBA\n"
+        "2020 - 2022\n"
+    )
+    resume = build_resume(text)
+    assert len(resume.education) == 2
+    assert resume.education[1].value.institution == "Tech Institute"
+    assert resume.education[1].value.degree == "MBA"
+    assert resume.education[1].value.dates is not None
+    assert resume.education[1].value.dates.raw == "2020 - 2022"
+
+
 def test_education_entries_without_blank_line_still_split() -> None:
     """Regression for a gap noted since Phase 2 and fixed in Phase 6: education entries have no
     bullets, so the experience/project entry-splitter's bullet-boundary fallback had nothing to

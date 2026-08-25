@@ -25,6 +25,16 @@ def normalize_header(line: str) -> str:
     return _TRAILING_PUNCTUATION_RE.sub("", line.strip()).strip().lower()
 
 
+#: A real section header word is essentially never this short - "AWARDS" (6) and
+#: "PUBLICATIONS" (12) are typical. Short all-caps tokens well under this length are
+#: overwhelmingly degree and certification abbreviations that legitimately appear on their own
+#: line inside a section - "MBA", "PMP", "CFA", "PHD", "CPA" - not section headers themselves.
+#: Phase 9C found this concretely: an EDUCATION entry with "MBA" alone on its own line had that
+#: line misread as the start of an unrelated custom section, silently truncating the entry and
+#: losing its date range entirely.
+_MIN_ALL_CAPS_HEADER_LENGTH = 5
+
+
 def looks_like_all_caps_header(line: str) -> bool:
     """Fallback detector for a header not in the known-keyword table: ALL-CAPS only.
 
@@ -36,12 +46,12 @@ def looks_like_all_caps_header(line: str) -> bool:
     surrounds it - a safe failure mode.
     """
     stripped = line.strip()
-    if not (3 <= len(stripped) <= 45):
+    if not (_MIN_ALL_CAPS_HEADER_LENGTH <= len(stripped) <= 45):
         return False
     if not _HEADER_SHAPE_RE.match(stripped):
         return False
     letters = [c for c in stripped if c.isalpha()]
-    if len(letters) < 3:
+    if len(letters) < _MIN_ALL_CAPS_HEADER_LENGTH:
         return False
     upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
     return upper_ratio > 0.85

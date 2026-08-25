@@ -40,7 +40,36 @@ def _iter_block_items(document: DocxDocument) -> Iterator[Paragraph | Table]:
             yield Table(child, document)
 
 
+#: A genuine small reference table ("Skill | Level") rarely runs this many rows; a table used as
+#: a page-layout device (a very common way to build a sidebar-plus-main-column resume in Word,
+#: since DOCX has no native CSS-style column layout most templates would actually want) typically
+#: spans most of the page. This distinguishes the two rather than guessing from formatting alone.
+_LAYOUT_TABLE_MIN_ROWS = 4
+
+
 def _table_text(table: Table) -> str:
+    """Row-major for an ordinary small data table; column-major for a likely layout table.
+
+    Joining every row's cells with " | " is correct for a real data table, but wrong for a table
+    used to lay out a sidebar next to a main column: "Jordan Vance | EXPERIENCE" from a name in
+    the left cell and a section header in the right cell of the same row, interleaving two
+    logically separate columns onto one line - the DOCX equivalent of the reading-order bug
+    Phase 9C found and fixed for multi-column PDFs. Reading one full column before the next
+    avoids it.
+    """
+    if len(table.rows) >= _LAYOUT_TABLE_MIN_ROWS and len(table.columns) >= 2:
+        try:
+            column_count = len(table.columns)
+            columns_text = []
+            for col_index in range(column_count):
+                column_lines = [row.cells[col_index].text.strip() for row in table.rows]
+                column_text = "\n".join(line for line in column_lines if line)
+                if column_text:
+                    columns_text.append(column_text)
+            return "\n\n".join(columns_text)
+        except IndexError:
+            pass  # A ragged/merged-cell table doesn't fit this shape - fall back below.
+
     rows = [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
     return "\n".join(row for row in rows if row.strip())
 
@@ -94,6 +123,13 @@ def extract_docx(data: bytes) -> ExtractionResult:
         for section in document.sections
     )
     multi_column, has_text_box = _detect_columns_and_textboxes(data)
+    # A layout table (see _table_text) is multi-column just as much as a native Word "Format ->
+    # Columns" section is - both put visually separate content side by side, which is exactly
+    # the formatting-risk signal `multi_column` exists to report (ATS parsing simulation).
+    multi_column = multi_column or any(
+        len(table.rows) >= _LAYOUT_TABLE_MIN_ROWS and len(table.columns) >= 2
+        for table in document.tables
+    )
 
     return ExtractionResult(
         kind=DocumentKind.DOCX,

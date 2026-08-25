@@ -497,16 +497,53 @@ a session works normally → reloading an active session skips the gate and rejo
 "End session & delete data" fires `DELETE /v1/session` (`204`) and returns to the consent gate.
 Zero console errors throughout.
 
+### Phase 9C — Resume extraction & reconstruction reliability
+
+Built a battery of realistic synthetic resume layouts (real-world templates, not just the
+existing single-column fixtures) and stress-tested the extraction pipeline against each one.
+Five real, previously-undiscovered defects were found this way and fixed - not assumed correct
+because the existing test suite passed, which it did the whole time these were live.
+
+| Defect | Root cause | Fix |
+|---|---|---|
+| Multi-column PDF text reads in the wrong order | `page.extract_text()` groups words into lines purely by vertical position - on a two-column page, a left-sidebar word and a right-column word at the same height land on the same reconstructed line, e.g. `"Jordan Vance EXPERIENCE"` from a name and an unrelated section header | `app/documents/extract/pdf.py::_column_aware_text` crops the page to each column and extracts each independently, so pdfplumber's own line-grouping never sees content from the other column |
+| Column detection missed asymmetric sidebar layouts | The old heuristic only checked a fixed 45-55% centre band, which only catches near-equal-width columns - a common narrow-sidebar-plus-wide-main-column resume template has its gutter anywhere from ~25-40% | Replaced with `_find_gutter`: sorts every word's horizontal midpoint and finds the single widest gap within a central search band, so the gutter position is measured, not assumed |
+| Title and organisation on separate lines silently dropped the organisation | `_split_header_and_dates` only recognised "Title, Org" combined on one line; when they're on two entirely separate lines (a common template pattern, not just a PDF-extraction artefact), the organisation line and the date line were both misfiled as fake bullets | Extended `_split_header_and_dates` with a conservative fallback (`_looks_like_subheader_line`: short, no bullet marker, no sentence-ending punctuation) that folds a plausible organisation line into the header before re-checking for a date on the line after it. Deliberately **not** applied to projects (`merge_subheader=False`), where a single line after the title is legitimately a description, not an organisation - the two shapes are not distinguishable, and projects already has a correct path for that line |
+| Short all-caps abbreviations misread as new section headers | The ALL-CAPS section-header fallback (built for genuine unrecognised headers like "AWARDS") required only 3+ uppercase letters - "MBA", "PMP", "CFA" sitting alone on their own line (extremely common for a degree or certification) satisfied it just as well, silently truncating whatever section they appeared inside | Raised the minimum length for the fallback to 5 (`app/documents/heading_split.py`) - real section-header words are essentially never this short, while degree/certification abbreviations almost always are |
+| DOCX layout tables read in the wrong order (the DOCX analogue of the PDF bug above) | DOCX has no native CSS-style column layout most sidebar resume templates actually want, so a borderless table is the usual real-world workaround - `_table_text` joined every row's cells with `" | "`, interleaving sidebar and main-column content onto one line exactly like the PDF case | `app/documents/extract/docx.py::_table_text` now reads column-major (one full column before the next) once a table looks like a layout device (≥4 rows, ≥2 columns) rather than a small genuine data table like "Skill \| Level" (which stays row-major, unaffected) |
+
+**Verification** — all green:
+
+```
+backend    563 passed, 10 skipped (Redis, no server present)   ruff clean   mypy clean
+```
+
+Every defect above has a dedicated regression test reproducing the exact failure mode, plus new
+realistic fixtures (`make_sidebar_resume_pdf_bytes`, `make_sidebar_table_docx_bytes`) that were
+not needed before because nothing in the existing fixture set exercised an asymmetric or
+table-based two-column layout. Verified with direct end-to-end runs (extract → structure) printed
+and inspected by hand for each defect before writing the test that locks the fix in, not just
+"the assertion I wrote passes."
+
+### Not yet covered in 9C
+
+Time-bounded this pass to defects actually found by testing, not an exhaustive enumeration of
+every item PHASE_9_IMPLEMENTATION_PLAN.md's 9C section lists. Explicitly not yet stress-tested:
+OCR-derived text (no Tesseract in this environment - Phase 2's existing gap), truly ragged/merged
+DOCX table cells beyond the `IndexError` fallback, and a wider variety of real degree/date
+notations (season+year, academic-year ranges like "2019/2020"). None were found broken by what
+*was* tested; they are simply outside what got exercised this pass, named here rather than
+silently assumed fine.
+
 ## In progress
 
-Phase 9C (resume extraction & reconstruction reliability) is next - see
-[PHASE_9_IMPLEMENTATION_PLAN.md](PHASE_9_IMPLEMENTATION_PLAN.md) for 9C through 9J.
+Phase 9D (extraction review UI) is next - see
+[PHASE_9_IMPLEMENTATION_PLAN.md](PHASE_9_IMPLEMENTATION_PLAN.md).
 
 ## Planned
 
 | Sub-phase | Scope |
 |---|---|
-| 9C | Resume extraction & reconstruction reliability - real-world PDF/DOCX layouts, section detection, entry boundaries, nesting |
 | 9D | Extraction review UI - user can inspect and correct the structured resume before it becomes the source of truth for everything downstream |
 | 9E | Complete frontend redesign around the real product journey; remove unnecessary UI text |
 | 9F | Gemini AI integration (`GeminiProvider` behind the existing `LLMProvider` abstraction), replacing Anthropic as the configured provider |

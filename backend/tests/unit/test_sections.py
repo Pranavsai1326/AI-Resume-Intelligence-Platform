@@ -42,6 +42,21 @@ def test_all_caps_unknown_header_becomes_custom() -> None:
     assert custom.title == "AWARDS"
 
 
+def test_short_all_caps_acronym_is_not_mistaken_for_a_section_header() -> None:
+    """Phase 9C regression: a short all-caps degree/certification abbreviation ("MBA", "PMP",
+    "CFA") sitting alone on its own line - common in real resumes - used to satisfy the ALL-CAPS
+    header fallback (originally built for genuine unrecognised headers like "AWARDS") purely by
+    being 3+ uppercase letters, silently truncating whatever section it appeared inside."""
+    sections = detect_sections(
+        "EDUCATION\nTech Institute\nMBA\n2020 - 2022\n\n"
+        "CERTIFICATIONS\nPMP\n- Project Management Institute"
+    )
+    education = next(s for s in sections if s.kind is SectionKind.EDUCATION)
+    assert "MBA" in education.body
+    assert "2020 - 2022" in education.body
+    assert not any(s.kind is SectionKind.CUSTOM for s in sections)
+
+
 def test_ordinary_content_lines_are_not_mistaken_for_headers() -> None:
     """A name and a job title line must not fragment into bogus custom sections.
 
