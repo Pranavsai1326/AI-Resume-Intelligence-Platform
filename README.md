@@ -16,10 +16,11 @@ cleanup, authoritative TTL expiry, a periodic janitor sweep, and a startup sweep
 
 ## Status
 
-**Phase 6 complete** — career intelligence on top of the Phase 5 resume builder: AI-drafted cover
-letters and interview prep questions, each grounded in the resume and job and checked against them
-before ever being shown, plus deterministic learning priorities ranked from Phase 4's skill gaps
-that need no AI key at all. Phase 7 (recruiter screening) is next.
+**Phase 7 complete** — recruiter screening: upload a job description and a batch of candidate
+resumes, each processed asynchronously (validate, extract, redact, score) without blocking the
+request that started it. Protected and irrelevant attributes are stripped before any score is
+computed - blind review by construction, not a display-time filter - then candidates are ranked,
+compared side by side, and shortlisted. Phase 8 (production hardening) is next.
 See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Running it locally

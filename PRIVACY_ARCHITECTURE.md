@@ -1,6 +1,6 @@
 # PRIVACY ARCHITECTURE
 
-**Last updated:** 2026-08-25 (Phase 6)
+**Last updated:** 2026-08-25 (Phase 7)
 
 Privacy here is an architectural property, not a policy sentence. The guarantee is: *no code path
 exists that writes user content to durable storage.* This document defines that model, the layers
@@ -158,6 +158,18 @@ These are product requirements, not optional extras:
     (`backend/tests/privacy/test_resume_builder_privacy.py`). All three reuse the same
     session-scoped document/job lookup tailoring already uses (item 14) rather than introducing a
     new storage path to re-verify from scratch.
+16. Recruiter screening (Phase 7): a candidate's stored result never carries their real name,
+    email, phone, or links - the *only* resume ever stored per candidate is the redacted one, so
+    blind review holds by construction rather than by a display-time filter a future endpoint
+    could forget to apply. Candidate content carries no canary token into logs, one recruiter
+    session cannot reach another's screening context, candidates, ranking, comparison, or
+    shortlist, and screening data is unreachable through the API immediately after
+    `DELETE /v1/session` (`backend/tests/privacy/test_screening_privacy.py`). One known, bounded
+    gap remains in the underlying store-level guarantee, distinct from the API-reachability
+    property this test proves: a candidate job still running at the exact moment a session is
+    destroyed is not actively cancelled, so its result can still be written to an
+    otherwise-deleted namespace - unreachable through the API regardless, and bounded by the same
+    TTL every session object already carries. See [ARCHITECTURE.md](ARCHITECTURE.md) section 8.
 
 ## 11. What we tell users — and what we refuse to claim
 

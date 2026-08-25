@@ -196,6 +196,63 @@ export interface JobMatchResult {
 }
 
 // ---------------------------------------------------------------------------
+// Recruiter screening (Phase 7): bulk ingest, async status, ranking, comparison, shortlist.
+// ---------------------------------------------------------------------------
+
+export interface ScreeningContext {
+  screening_id: string;
+  job_id: string;
+  created_at: string;
+  candidate_ids: string[];
+}
+
+export type CandidateJobState = "pending" | "processing" | "completed" | "failed" | "retrying";
+
+export interface CandidateStatus {
+  candidate_id: string;
+  state: CandidateJobState;
+  error: string | null;
+}
+
+export interface ScreeningStatusSummary {
+  screening_id: string;
+  total: number;
+  pending: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  candidates: CandidateStatus[];
+}
+
+export interface RedactionInfo {
+  applied: boolean;
+  fields: string[];
+}
+
+export interface CandidateResult {
+  candidate_id: string;
+  match: JobMatchResult;
+  redaction: RedactionInfo;
+  resume: Resume;
+  shortlisted: boolean;
+}
+
+export interface RankedPage {
+  total: number;
+  candidates: CandidateResult[];
+}
+
+export interface ComparisonRow {
+  candidate_id: string;
+  overall: number;
+  components: Record<string, number>;
+}
+
+export interface ComparisonResult {
+  rows: ComparisonRow[];
+}
+
+// ---------------------------------------------------------------------------
 // Resume Builder (Phase 5): versions, AI rewriting, tailoring, export.
 // ---------------------------------------------------------------------------
 
@@ -473,6 +530,39 @@ async function uploadDocument(
   return (await response.json()) as DocumentUploadResponse;
 }
 
+interface UploadCandidatesResponse {
+  candidate_ids: string[];
+}
+
+/** Bulk candidate upload - same multipart rationale as `uploadDocument`, one field per file. */
+async function uploadCandidates(
+  screeningId: string,
+  files: File[],
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<UploadCandidatesResponse> {
+  const form = new FormData();
+  for (const file of files) form.append("files", file);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/v1/screening/${screeningId}/candidates`, {
+      method: "POST",
+      headers: { "X-Session-Id": sessionId },
+      body: form,
+      signal,
+      credentials: "omit",
+      cache: "no-store",
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw NETWORK_ERROR;
+  }
+
+  if (!response.ok) throw await toApiError(response);
+  return (await response.json()) as UploadCandidatesResponse;
+}
+
 /**
  * Filename from a `Content-Disposition: attachment; filename="..."` header. Falls back to a
  * generic name rather than throwing if the header is missing or unparsable - the download still
@@ -680,6 +770,78 @@ export const api = {
     apiRequest<LearningPriorityResult>("/v1/learning-priorities", {
       method: "POST",
       body: { document_id: documentId, job_id: jobId, version_id: versionId ?? null },
+      sessionId,
+      signal,
+    }),
+
+  createScreening: (jobId: string, sessionId: string, signal?: AbortSignal) =>
+    apiRequest<ScreeningContext>("/v1/screening", {
+      method: "POST",
+      body: { job_id: jobId },
+      sessionId,
+      signal,
+    }),
+
+  uploadCandidates,
+
+  getScreeningStatus: (screeningId: string, sessionId: string, signal?: AbortSignal) =>
+    apiRequest<ScreeningStatusSummary>(`/v1/screening/${screeningId}/status`, {
+      sessionId,
+      signal,
+    }),
+
+  getScreeningRanking: (
+    screeningId: string,
+    sessionId: string,
+    params?: { minScore?: number; limit?: number; offset?: number; descending?: boolean },
+    signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams();
+    if (params?.minScore !== undefined) query.set("min_score", String(params.minScore));
+    if (params?.limit !== undefined) query.set("limit", String(params.limit));
+    if (params?.offset !== undefined) query.set("offset", String(params.offset));
+    if (params?.descending !== undefined) query.set("descending", String(params.descending));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return apiRequest<RankedPage>(`/v1/screening/${screeningId}/ranking${suffix}`, {
+      sessionId,
+      signal,
+    });
+  },
+
+  getCandidate: (
+    screeningId: string,
+    candidateId: string,
+    sessionId: string,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<CandidateResult>(`/v1/screening/${screeningId}/candidates/${candidateId}`, {
+      sessionId,
+      signal,
+    }),
+
+  compareCandidates: (
+    screeningId: string,
+    candidateIds: string[],
+    sessionId: string,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<ComparisonResult>(`/v1/screening/${screeningId}/compare`, {
+      method: "POST",
+      body: { candidate_ids: candidateIds },
+      sessionId,
+      signal,
+    }),
+
+  setShortlisted: (
+    screeningId: string,
+    candidateId: string,
+    shortlisted: boolean,
+    sessionId: string,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<CandidateResult>(`/v1/screening/${screeningId}/shortlist`, {
+      method: "POST",
+      body: { candidate_id: candidateId, shortlisted },
       sessionId,
       signal,
     }),

@@ -14,6 +14,7 @@ from fastapi import Depends, Header, Request
 from app.config import Settings
 from app.core.errors import SessionRequiredError
 from app.core.ratelimit import RateLimiter
+from app.queue.inprocess import InProcessJobQueue
 from app.sessions.manager import SessionManager
 from app.sessions.models import SessionMeta
 
@@ -39,9 +40,15 @@ def get_rate_limiter(request: Request) -> RateLimiter:
     return limiter
 
 
+def get_job_queue(request: Request) -> InProcessJobQueue:
+    queue: InProcessJobQueue = request.app.state.job_queue
+    return queue
+
+
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 SessionManagerDep = Annotated[SessionManager, Depends(get_session_manager)]
 RateLimiterDep = Annotated[RateLimiter, Depends(get_rate_limiter)]
+JobQueueDep = Annotated[InProcessJobQueue, Depends(get_job_queue)]
 
 
 async def require_session(

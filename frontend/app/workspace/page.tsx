@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { AlertCircle, Loader2, Search, Users } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 
 import { ResumeAnalyzer } from "@/components/analysis/resume-analyzer";
 import { AppShell } from "@/components/layout/app-shell";
+import { ScreeningWorkspace } from "@/components/screening/screening-workspace";
 import { useSessionActions } from "@/components/session/session-provider";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -34,27 +35,10 @@ interface ModuleCard {
 
 // Job matching, tailoring, the resume builder, and career intelligence (Phase 4-6) are real and
 // render inline in the upload -> analyze flow above rather than as another "not built yet" card -
-// see ResumeAnalyzer / ResumeBuilder / CareerPanel.
+// see ResumeAnalyzer / ResumeBuilder / CareerPanel. Bulk screening, ranking, comparison and
+// shortlisting (Phase 7) are real too - see ScreeningWorkspace.
 const CANDIDATE_MODULES: ModuleCard[] = [];
-
-const RECRUITER_MODULES: ModuleCard[] = [
-  {
-    key: "screening",
-    title: "Bulk screening",
-    description: "Upload a job description and a candidate batch for asynchronous processing.",
-    icon: Users,
-    phase: "Phase 7",
-    available: false,
-  },
-  {
-    key: "ranking",
-    title: "Ranking and comparison",
-    description: "Evidence-backed ranking with a per-candidate breakdown of every score.",
-    icon: Search,
-    phase: "Phase 7",
-    available: false,
-  },
-];
+const RECRUITER_MODULES: ModuleCard[] = [];
 
 export default function WorkspacePage() {
   const status = useSessionStore((s) => s.status);
@@ -162,12 +146,12 @@ export default function WorkspacePage() {
         </div>
 
         <Alert>
-          <AlertTitle>Phase 6 of the build is live</AlertTitle>
+          <AlertTitle>Phase 7 of the build is live</AlertTitle>
           <p className="text-ink-muted">
             Upload, resume analysis, job matching, the resume builder, AI-assisted tailoring,
-            export, cover letters, interview prep and learning priorities all work end to end
-            below. Anything not built yet is listed honestly with its real status — none of it
-            will show you a fabricated result.
+            export, cover letters, interview prep, learning priorities, and recruiter screening
+            all work end to end below. Anything not built yet is listed honestly with its real
+            status — none of it will show you a fabricated result.
           </p>
         </Alert>
 
@@ -182,6 +166,21 @@ export default function WorkspacePage() {
             </p>
             <div className="mt-4">
               <ResumeAnalyzer sessionId={info.session_id} />
+            </div>
+          </section>
+        ) : null}
+
+        {info.mode === "recruiter" ? (
+          <section aria-labelledby="screening-heading">
+            <h2 id="screening-heading" className="text-lg font-semibold text-ink">
+              Screen candidates
+            </h2>
+            <p className="mt-2 text-sm text-ink-muted">
+              Blind review by default: identity and protected attributes are redacted before any
+              score is computed and before you ever see a candidate.
+            </p>
+            <div className="mt-4">
+              <ScreeningWorkspace sessionId={info.session_id} />
             </div>
           </section>
         ) : null}

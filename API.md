@@ -1,6 +1,6 @@
 # API
 
-**Version:** v1 · **Base path:** `/v1` · **Last updated:** 2026-08-25 (Phase 6)
+**Version:** v1 · **Base path:** `/v1` · **Last updated:** 2026-08-25 (Phase 7)
 
 ## Conventions
 
@@ -364,16 +364,32 @@ Ordered required-before-preferred, and within the same importance, a flat `missi
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/screening` | Start a screening context for a `job_id`. |
-| `POST` | `/v1/screening/{id}/candidates` | Bulk upload resumes (multi-file). Enqueues one job per file, returns `job_ids`. Bounded by `MAX_BULK_RESUMES` (default 100). |
-| `GET` | `/v1/screening/{id}/status` | Aggregate progress plus per-job state (`PENDING/PROCESSING/COMPLETED/FAILED/RETRYING`). |
-| `GET` | `/v1/screening/{id}/ranking` | Ranked candidates with component scores, matched/missing requirements and evidence. Supports pagination, filtering and sorting. |
-| `GET` | `/v1/screening/{id}/candidates/{cid}` | One candidate's full explainable breakdown ("why ranked #1"). |
-| `POST` | `/v1/screening/{id}/compare` | Comparison matrix over selected candidate IDs. |
-| `POST` | `/v1/screening/{id}/shortlist` | Mark/unmark shortlisted candidates (session-scoped). |
+| `POST` | `/v1/screening` | Body: `{job_id}`. Starts a screening context; 404s if the job doesn't exist yet. |
+| `POST` | `/v1/screening/{id}/candidates` | Bulk upload resumes (multipart, field name `files`, repeated). Reads and size-bounds every file at request time, then enqueues one background job per candidate and returns `202 Accepted` with `{candidate_ids}` immediately - it does not wait for processing. Bounded by `MAX_BULK_RESUMES` (default 100) per session, cumulative across calls. |
+| `GET` | `/v1/screening/{id}/status` | Aggregate counts (`total`, `pending`, `processing`, `completed`, `failed`) plus a per-candidate `{candidate_id, state, error}` list. `state` is one of `pending`/`processing`/`retrying`/`completed`/`failed`. Poll this until `completed + failed == total`. |
+| `GET` | `/v1/screening/{id}/ranking` | Completed candidates only, sorted by `match.overall`. Query params: `min_score`, `limit` (default 20), `offset` (default 0), `descending` (default `true`). Returns `{total, candidates}` - `total` reflects the filtered count, not the page size. |
+| `GET` | `/v1/screening/{id}/candidates/{candidate_id}` | One candidate's full result: its `JobMatchResult` (the same shape `/v1/match` returns), its redacted resume, and its shortlist flag. |
+| `POST` | `/v1/screening/{id}/compare` | Body: `{candidate_ids: [...]}`. A matrix of already-computed scores - no recomputation, no extra LLM calls. |
+| `POST` | `/v1/screening/{id}/shortlist` | Body: `{candidate_id, shortlisted: bool}`. Session-scoped; returns the updated candidate result. |
 
-Screening responses expose `redaction: {applied: true, fields: [...]}` documenting which protected
-attributes were removed before scoring. Ranking never exposes an unexplained number.
+Every candidate result carries `redaction: {applied: bool, fields: [...]}` naming which categories
+were actually found and removed (never a category that found nothing) - `name`, `email`, `phone`,
+`links` are structural and always cleared when present; `gender`, `marital_status`,
+`nationality`, `religion`, `race_or_ethnicity`, `age_or_dob` are free-text pattern matches, so
+`fields` reflects what this specific candidate's resume happened to disclose. The **redacted**
+resume is the only one ever stored or returned - blind review by construction (PRD section 8,
+SECURITY.md section 10), not a filter a response could forget to apply. Ranking order is always
+deterministic (`overall`, computed once per candidate), never an LLM's opinion.
+
+```json
+{
+  "candidate_id": "a1b2c3d4e5f6a7b8c9d0",
+  "match": { "overall": 74.5, "components": { "...": "same shape as /v1/match" }, "...": "..." },
+  "redaction": { "applied": true, "fields": ["email", "links", "name", "phone"] },
+  "resume": { "contact": { "full_name": null, "email": null, "...": "..." }, "...": "..." },
+  "shortlisted": false
+}
+```
 
 ## Export
 
@@ -381,8 +397,7 @@ attributes were removed before scoring. Ranking never exposes an unexplained num
 |---|---|---|
 | `POST` | `/v1/export` | Body: `{document_id, version_id?, format: "pdf"\|"docx"}` → streamed document (`application/pdf` or `application/vnd.openxmlformats-officedocument.wordprocessingml.document`). |
 
-`/v1/export/report` (analysis/match/screening report export) is not yet built — Phase 7 concern,
-once recruiter screening exists.
+`/v1/export/report` (analysis/match/screening report export) is not yet built — Phase 8+ concern.
 
 PDF is rendered by headless Chromium from a shared HTML/CSS template (ADR-0006); DOCX by
 python-docx's object API. Both are rendered in memory and streamed with `Content-Disposition:

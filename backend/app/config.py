@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     ocr_enabled: bool = False
     tesseract_cmd: str = ""
 
+    # -- Recruiter screening (Phase 7) ----------------------------------------------------
+    #: Bounded-concurrency in-process worker pool (ARCHITECTURE.md section 8) - bulk screening
+    #: must never block inside the HTTP request that enqueues it.
+    screening_worker_concurrency: int = Field(default=4, ge=1)
+
     # -- Logging -------------------------------------------------------------------------
     log_level: str = "INFO"
     log_format: Literal["console", "json"] = "console"

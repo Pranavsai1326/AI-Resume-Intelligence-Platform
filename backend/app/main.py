@@ -19,6 +19,7 @@ from app.core.middleware import (
 )
 from app.core.ratelimit import RateLimiter
 from app.logging import configure_logging, get_logger
+from app.queue.inprocess import InProcessJobQueue
 from app.sessions.janitor import Janitor, startup_recovery
 from app.sessions.manager import SessionManager
 from app.sessions.memory import MemorySessionStore
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         release_grace_seconds=settings.session_release_grace_seconds,
     )
     app.state.rate_limiter = RateLimiter(store, enabled=settings.rate_limit_enabled)
+    app.state.job_queue = InProcessJobQueue(settings.screening_worker_concurrency)
 
     janitor = Janitor(store, settings.temp_path, settings.janitor_interval_seconds)
     janitor.start()

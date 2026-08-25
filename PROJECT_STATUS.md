@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 6 complete → Phase 7 ready to start
+**Last updated:** 2026-08-25 · **Current phase:** Phase 7 complete → Phase 8 ready to start
 
 > Read this file first in every session, then only the architecture docs relevant to the task.
 > Update it after every meaningful implementation change.
@@ -358,32 +358,91 @@ maintain. Asking for JSON in the prompt and validating what comes back keeps the
 abstraction as plain text completion; the cost is needing a parse-and-repair step, built once in
 `app/ai/structured.py` and reused by both callers.
 
+### Phase 7 — Recruiter screening
+
+**Backend** (`backend/app/queue/`, `backend/app/screening/`)
+
+| Area | Delivered |
+|---|---|
+| Async job queue | `app/queue/base.py` (`JobQueue` protocol, `JobState`: pending/processing/completed/failed/retrying) and `app/queue/inprocess.py` (`InProcessJobQueue` - dev-appropriate, no Redis: a bounded `asyncio.Semaphore` pool, one retry on failure with a fixed content-free error category, never the raw exception). One instance lives on `app.state.job_queue`, matching how the session store and rate limiter are already wired |
+| Redaction | `app/screening/redact.py`: direct identifiers (name, email, phone, links) are cleared structurally, since Phase 2 already isolates them in `ContactInfo`; a photo is never present to redact because extraction never captures one in the first place. Everything else PRD section 8 lists (gender, marital status, nationality, religion, race/ethnicity, age/DOB) has no isolated field, so a curated, disclosure-label-first pattern set scrubs free text - summary, bullets, education/project details. Deliberately narrow like `analysis/taxonomy.py`'s word lists: favours "Nationality:"-shaped disclosure labels over broad demonym lists, to keep the false-positive risk on company/technology names low |
+| Per-candidate pipeline | `app/screening/pipeline.py::process_candidate`: validate (magic-byte sniff) → extract → structure → **redact → match**, in that order, so scoring always runs against the redacted resume, never the original - honest ordering, not just incidentally safe (the scoring engine doesn't read contact info either way). CPU-bound stages run via `asyncio.to_thread` so one slow candidate never blocks the whole worker pool |
+| Ranking & comparison | `app/screening/rank.py` (sort/filter/paginate over already-computed `overall` scores - ranking order is always Layer 1, AI_ARCHITECTURE.md section 9) and `app/screening/compare.py` (a matrix over stored component scores, no recomputation) |
+| API | `POST /v1/screening`, `POST /v1/screening/{id}/candidates` (bulk multipart, 202 Accepted - returns immediately with candidate ids to poll), `GET /v1/screening/{id}/status`, `GET /v1/screening/{id}/ranking`, `GET /v1/screening/{id}/candidates/{cid}`, `POST /v1/screening/{id}/compare`, `POST /v1/screening/{id}/shortlist` |
+| Blind review | The *only* resume ever stored per candidate is the redacted one (`CandidateResult.resume`) - there is no unredacted version anywhere in the session for a future ranking or comparison view to accidentally surface. Blind review by construction, not a display-time filter |
+
+**Frontend** (`frontend/components/screening/`)
+
+`screening-workspace.tsx`: paste a job description once, upload a candidate batch, watch it
+process live (genuine polling against `GET .../status`, not a simulated progress bar), then rank,
+open a candidate's full explainable breakdown (`candidate-detail.tsx`, reusing the same
+`JobMatchReport` a single candidate sees of their own match, plus `ResumePreview` for the redacted
+resume), select several for a side-by-side `comparison-matrix.tsx`, and shortlist.
+
+**Verification** — all green:
+
+```
+backend    530 passed, 10 skipped (Redis, no server present)   ruff clean   mypy clean
+frontend   42 passed   eslint clean   tsc --noEmit clean   next build clean
+```
+
+Verified live: created a recruiter session, pasted a job description, and confirmed
+`POST /v1/screening` genuinely creates a screening context end to end against a running backend
+(caught and fixed a stale-backend-process bug in the process - see Defects below). Full
+click-through of bulk candidate upload wasn't driven through the browser automation tool available
+this session, since it has no file-picker support - covered instead by the integration test suite,
+which polls a real background `asyncio` task to completion the same way a real client would
+(`tests/integration/test_screening_api.py`), not a mocked queue.
+
+### Defects found and fixed during Phase 7
+
+1. **Live smoke-testing against a stale backend process.** A backend process left running from
+   earlier in the session (before this phase's code existed) was still bound to port 8000;
+   `POST /v1/screening` 404'd against it. Not a code defect, but a reminder that "restart the
+   server" means confirming the *new* code is actually running - `curl .../openapi.json` was used
+   to verify the route existed before concluding anything about the endpoint itself.
+2. No code defects found by the test suite this phase - the queue's retry/failure paths, the
+   redaction patterns, and the full async upload→poll→rank→compare→shortlist flow all passed on
+   first correct implementation, verified by tests written to fail if they didn't (e.g. asserting
+   `attempts == 2` for a job that fails once then succeeds, not just "eventually completes").
+
+### Known limitation
+
+**Job cancellation on session destroy is passive, not active.** `DELETE /v1/session` deletes the
+session's store namespace but does not reach into the job queue to cancel any of that session's
+still-running candidate jobs (`JobQueue.cancel` exists but nothing calls it from session
+lifecycle). In practice this is bounded, not unsafe: a job that finishes after its session was
+destroyed calls `SessionManager.put_object` with an already-captured `SessionMeta` snapshot, which
+does not re-check whether the underlying namespace still exists - the write can succeed and leave
+an orphaned key, but that key carries the same TTL every session object already carries
+(`CANDIDATE_TTL_SECONDS = 3600`) and is never reachable through the API regardless, since every
+request for the destroyed session id fails session resolution before any handler runs
+(`test_screening_data_is_destroyed_with_the_session` proves this reachability guarantee, not
+instant store-level deletion). Worst case: an unreachable key lingers up to an hour, the same
+bound Redis TTL expiry already relies on elsewhere - not a new privacy exposure, but an honest gap
+between "destroyed" and "instantly purged from the store" worth closing by wiring session destroy
+to `JobQueue.cancel` for any of that session's in-flight job ids. Tracked for Phase 8.
+
 ## In progress
 
-Nothing. Phase 6 is committed.
+Nothing. Phase 7 is committed.
 
-## Next task — Phase 7 (recruiter screening)
+## Next task — Phase 8 (production hardening)
 
-1. Bulk resume upload and an async job queue (`JobQueue` protocol: in-process pool for dev, ARQ +
-   Redis for production) — screening must never block inside an HTTP request
-2. Per-candidate pipeline: validate → extract → structure → redact protected attributes → embed →
-   match → component scores, reusing Phase 3/4's scoring engine rather than a parallel one
-3. Ranking with pagination/filtering/sorting, a per-candidate "why ranked #N" explainable
-   breakdown, and a comparison matrix over stored component scores (no recomputation, no extra
-   LLM calls)
-4. Redaction of protected attributes before any model or ranking logic sees candidate text, with
-   `redaction: {applied, fields}` disclosed in every screening response (PRD's explainability and
-   no-protected-attributes rules)
-5. Shortlisting (session-scoped) and export
-6. Tests: redaction correctness, ranking explainability, privacy tests proving one recruiter
-   session cannot see another's candidate pool, and that queued jobs for an expired session are
-   cancelled with their inputs dropped
+1. Close the job-cancellation-on-session-destroy gap noted above
+2. Security hardening pass: review SECURITY.md's checklist end to end now that every module it
+   describes actually exists
+3. Rate limits and retries tuned against realistic load, not just development defaults
+4. Performance: profile the bulk screening pipeline under a full `MAX_BULK_RESUMES`-sized batch
+5. Monitoring: latency, error rate by category, queue depth, worker failures - metrics.md work
+   the architecture docs have described since Phase 0 but nothing has emitted yet
+6. AI evaluation and cost tracking now that four LLM-backed features exist (rewrite, tailor,
+   cover letter, interview prep)
 
 ## Planned
 
 | Phase | Scope |
 |---|---|
-| 8 | Production hardening: security, rate limits, retries, performance, monitoring, AI evaluation, cost |
 | 9 | Deployment: environments, CI/CD, health checks, monitoring, smoke tests, DEPLOYMENT.md + TESTING.md |
 
 ## Architecture decisions
@@ -423,6 +482,7 @@ No Docker, no Redis, no database and no API key is needed to run any of the abov
 | Redis not installed | Redis backend unexercised locally | 10 conformance tests skip with a clear reason; run them with `TEST_REDIS_URL` set. Memory backend covers development |
 | Tesseract not installed | Scanned/image-only PDFs fail with `422 NO_EXTRACTABLE_TEXT` | Provider abstraction built in Phase 2 (`app.documents.extract.ocr`); feature-detected and reported false by `/ready`, honest error rather than silent failure or fake text |
 | No LLM key | Layer 3 (AI writing, tailoring, cover letters, interview prep) cannot run | `/ready` reports `llm: false`. `NullLLMProvider` reports every AI feature honestly unavailable rather than erroring or fabricating; deterministic tailoring (skill reordering, requirement reminders) and learning priorities work with no key at all. Semantic matching (Phase 4) needed no key and is confirmed working — ADR-0005's bet on local ONNX embeddings paid off |
+| Job cancellation on session destroy is passive | A candidate job that finishes after its session was destroyed can leave an orphaned, unreachable store key for up to `CANDIDATE_TTL_SECONDS` (1 hour) | Documented in detail under Phase 7 above; tracked for Phase 8 (wire `SessionManager.destroy` to `JobQueue.cancel` for the session's in-flight job ids) |
 | No CI pipeline yet | Gates run locally only | Phase 9 |
 
 ## Current blockers

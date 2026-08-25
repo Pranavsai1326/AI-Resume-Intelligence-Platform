@@ -1,6 +1,6 @@
 # SECURITY
 
-**Last updated:** 2026-08-22
+**Last updated:** 2026-08-25 (Phase 7)
 
 The platform accepts untrusted binary documents from anonymous users and forwards derived text to an
 AI provider. Those two facts drive the whole security posture.
@@ -128,12 +128,24 @@ the client.
 
 ## 10. Responsible-screening safeguards (security-adjacent, product-critical)
 
-* `screening/redact.py` strips protected and irrelevant attributes — name, photo, gender markers,
-  age/DOB, marital status, nationality, religion, caste, race — before scoring and before any model
-  call, and records which categories were removed.
-* Ranking features come from an explicit allowlist; adding a feature requires a code change and
-  review, so a protected attribute cannot leak into scoring through configuration.
-* Blind-review mode (candidate identity hidden until shortlisting) is the default in recruiter mode.
+As built in Phase 7 (`app/screening/redact.py`):
+
+* Direct identifiers - name, email, phone, links - are cleared structurally, since Phase 2
+  extraction already isolates them in `ContactInfo`; nothing to pattern-match. A photo is never
+  present to strip in the first place, since extraction never captures one (text only).
+* Everything else PRD section 8 lists (gender, marital status, nationality, religion,
+  race/ethnicity, age/DOB) is caught by a curated, deliberately narrow pattern set over free text
+  - favouring explicit disclosure-label shapes ("Nationality:", "DOB:") over broad demonym lists,
+  to keep the false-positive risk on ordinary company/technology names low. Necessarily
+  incomplete, the same honesty already applied to `analysis/taxonomy.py`'s word lists.
+* Redaction runs strictly before matching (`screening/pipeline.py`), and the redacted resume is
+  the *only* version ever stored per candidate - there is no unredacted copy anywhere in the
+  session for a later view to accidentally surface. Blind review holds for the life of the
+  candidate result, not just until shortlisting: shortlisting toggles a flag on the same redacted
+  record, it does not reveal a name that was never stored.
+* Ranking features come from an explicit allowlist (the same deterministic/semantic components
+  `/v1/match` already computes); adding a feature requires a code change and review, so a
+  protected attribute cannot leak into scoring through configuration.
 * The product states that these measures reduce bias; it never claims to eliminate it.
 
 ## 11. Testing and verification

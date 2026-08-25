@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-**Last updated:** 2026-08-25 (Phase 6) · Companion docs: [PRIVACY_ARCHITECTURE.md](PRIVACY_ARCHITECTURE.md),
+**Last updated:** 2026-08-25 (Phase 7) · Companion docs: [PRIVACY_ARCHITECTURE.md](PRIVACY_ARCHITECTURE.md),
 [AI_ARCHITECTURE.md](AI_ARCHITECTURE.md), [SECURITY.md](SECURITY.md), [API.md](API.md)
 
 ## 1. System shape
@@ -53,7 +53,7 @@ backend/
   app/
     main.py  config.py  logging.py
     api/v1/        session documents analysis jobs match resume ai tailor export career
-                   [screening] health
+                   screening health
     core/          errors middleware ratelimit clock deps
     sessions/      store.py memory.py redis_store.py manager.py models.py janitor.py
     documents/     upload.py tempfile_scope.py storage.py sections.py structure.py
@@ -69,8 +69,8 @@ backend/
                    structured.py cover_letter.py interview.py
                    # LLM only (Phase 5-6) - local embeddings live in matching/embeddings.py (ADR-0005)
     export/        html_template.py pdf.py docx.py
-    [screening/     pipeline.py redact.py rank.py compare.py]
-    [queue/         base.py inprocess.py arq_queue.py]
+    screening/     models.py pipeline.py redact.py rank.py compare.py
+    queue/         base.py inprocess.py [arq_queue.py]
   tests/           unit/ integration/ privacy/  fixtures.py  matching_fakes.py  ai_fakes.py
 frontend/
   app/  components/  lib/  stores/  hooks/  tests/
@@ -98,7 +98,12 @@ ADR-0006, `export/docx.py` via python-docx, sharing one HTML template source in
 JSON-in-prompt structured-output helper (`ai/structured.py`) plus cover letters and interview
 prep (`ai/cover_letter.py`, `ai/interview.py` — the first features needing multi-field LLM
 output rather than one plain string), and `matching/learning_priorities.py` (pure Layer 1,
-reordering Phase 4's skill gaps, no LLM involved). The originally-planned single `scoring/` module never materialised as
+reordering Phase 4's skill gaps, no LLM involved). Phase 7 added `queue/` (the `JobQueue`
+protocol and its in-process implementation - section 8 below) and `screening/`: redaction
+(`screening/redact.py`), the per-candidate pipeline (`screening/pipeline.py`, reusing
+`matching/engine.py`'s `compute_job_match` unchanged rather than a parallel scoring path), and
+ranking/comparison (`screening/rank.py`, `screening/compare.py`) over results already computed
+and stored, never recomputed. The originally-planned single `scoring/` module never materialised as
 a separate package - each domain (`analysis/`, `matching/`) keeps its own `config.py` /
 `engine.py`, sharing only the actually-common piece,
 `analysis/scoring_utils.apply_degrade_and_renormalize`, since a resume-health profile and a
@@ -150,15 +155,20 @@ Parse once, structure once, embed once, reuse everywhere (see [AI_ARCHITECTURE.m
 ## 6. Data flow — recruiter
 
 ```
-JD upload   -> requirement extraction -> requirement vector set
-Bulk upload -> enqueue N jobs (JobQueue) -> bounded-concurrency workers
+JD upload   -> requirement extraction (app.jobs.parse, Phase 4)
+Bulk upload -> enqueue N jobs (JobQueue) -> bounded asyncio worker pool
    per job: validate -> extract -> structure -> redact protected attributes
-            -> embed -> match -> component scores
-Client polls job state: PENDING -> PROCESSING -> COMPLETED | FAILED | RETRYING
-Ranking     = sort by scoring-engine overall, per-candidate evidence retained in session
+            -> match (same compute_job_match as /v1/match, unchanged)
+Client polls job state: PENDING -> PROCESSING -> RETRYING -> COMPLETED | FAILED
+Ranking     = sort by scoring-engine overall, no recomputation
 Comparison  = matrix over stored component scores (no recomputation, no extra LLM calls)
-Export      = report rendered on demand, streamed, discarded
-Session end = every candidate's data destroyed with the namespace
+Shortlist   = a flag on the stored candidate result, toggled explicitly
+Export      = resume-level export (Phase 5) exists; a screening/comparison report export does not
+              yet - Phase 8+ concern
+Session end = the store namespace is deleted; a candidate job still finishing at that exact
+              moment is not actively cancelled (ARCHITECTURE.md section 8 - "known gap"), though
+              its result becomes unreachable through the API regardless once the session id no
+              longer resolves
 ```
 
 ## 7. Scoring engine
@@ -187,11 +197,29 @@ match_profile_default:  # Phase 4 - not yet built
 
 ## 8. Async processing
 
-`JobQueue` protocol: `enqueue(job) -> job_id`, `get(job_id) -> JobState`, `cancel(job_id)`.
-States: `PENDING -> PROCESSING -> COMPLETED | FAILED | RETRYING`. Retries apply only to idempotent
-stages (extraction, embedding, scoring) with capped exponential backoff. Every job is session-scoped
-and inherits the session TTL: when a session expires, its queued jobs are cancelled and their inputs
-dropped.
+As built for Phase 7 (`app/queue/base.py`, `app/queue/inprocess.py`): a `JobQueue` protocol -
+`enqueue(job_id, work) -> None`, `get_state(job_id) -> QueuedJob | None`, `cancel(job_id) -> None`
+- with one implementation, `InProcessJobQueue`: a bounded `asyncio.Semaphore` worker pool, dev-
+appropriate the same way the memory session store is (no Redis, no separate process). States:
+`PENDING -> PROCESSING -> COMPLETED | FAILED`, with `RETRYING` in between on failure. Retries are
+capped at one attempt with a fixed short delay (not exponential backoff - one retry catches a
+transient hiccup; a second failure means the input is genuinely broken, not that a longer wait
+would help) and apply uniformly, since every screening pipeline stage (extract, structure, redact,
+match) is idempotent given the same input bytes. A job's error is always a fixed, content-free
+category (`"processing_failed"`) - never the raw exception message, which could carry resume
+content through a stack trace or a library's error string.
+
+Bulk screening is the only consumer so far (`app/screening/pipeline.py`, one job per candidate).
+**Known gap, not yet closed:** jobs are not actively cancelled when their owning session is
+destroyed - `SessionManager.destroy` deletes the store namespace but never calls `JobQueue.cancel`
+for that session's in-flight job ids. In practice this is bounded rather than unsafe: a job that
+finishes after its session is gone fails to matter (every subsequent request for that session id
+fails resolution before reaching any handler, so the result is unreachable regardless of whether
+the write technically succeeded), and any orphaned key still carries the same TTL every session
+object already has. See PROJECT_STATUS.md's Phase 7 section for the full reasoning; closing it
+(wiring destroy to cancel) is queued for Phase 8. A production ARQ + Redis implementation behind
+the same `JobQueue` protocol remains future work, matching the pattern already used for the
+session store (ADR-0002) and embeddings (ADR-0005).
 
 ## 9. Failure posture
 
@@ -204,7 +232,7 @@ Every external dependency is assumed to fail. Each has a defined, honest degrada
 | OCR binary | Image-only PDFs rejected clearly: "no extractable text, and OCR is unavailable" |
 | Chromium renderer | DOCX and HTML export still offered; PDF export reports unavailable |
 | Redis (prod) | Readiness fails and new sessions are refused, rather than silently falling back to memory |
-| Worker | Job moves to FAILED with a retryable flag; partial bulk results remain usable and are labelled partial |
+| Worker | One capped retry, then FAILED with a fixed, content-free error category; other candidates in the same batch are unaffected, and `/v1/screening/{id}/ranking` naturally reflects only what has completed so far - a partial result is simply the current state, not a separately labelled mode |
 
 ## 10. Health and observability
 
@@ -218,8 +246,8 @@ success/failure, active session count. No metric or log line carries resume cont
 Pydantic `Settings` sourced from environment; secrets only from environment or a secret manager,
 never committed. Key knobs: `SESSION_IDLE_TTL_SECONDS`, `SESSION_ABSOLUTE_TTL_SECONDS`,
 `SESSION_STORE_BACKEND`, `REDIS_URL`, `MAX_UPLOAD_BYTES`, `MAX_PDF_PAGES`, `MAX_BULK_RESUMES`,
-`LLM_PROVIDER`, `LLM_MODEL_REASONING`, `LLM_MODEL_BULK`, `EMBEDDING_BACKEND`, `OCR_ENABLED`,
-`RATE_LIMIT_*`, `CORS_ORIGINS`.
+`SCREENING_WORKER_CONCURRENCY`, `LLM_PROVIDER`, `LLM_MODEL_REASONING`, `LLM_MODEL_BULK`,
+`EMBEDDING_BACKEND`, `OCR_ENABLED`, `RATE_LIMIT_*`, `CORS_ORIGINS`.
 
 Configuration is validated at startup and the app **refuses to boot** on unsafe production
 combinations — memory session store with multiple workers, wildcard CORS with credentials, or a
