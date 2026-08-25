@@ -178,7 +178,7 @@ async def upload_candidates(
             manager=manager,
             session=session,
         )
-        await queue.enqueue(candidate_id, work)
+        await queue.enqueue(candidate_id, work, session_id=session.session_id)
 
     context.candidate_ids.extend(candidate_ids)
     await manager.put_object(session, "screening", screening_id, context.model_dump_json())

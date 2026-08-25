@@ -22,6 +22,7 @@ from starlette.types import ASGIApp
 
 from app.config import Settings
 from app.core.errors import AppError, ErrorCategory, RateLimitedError, ValidationFailedError
+from app.core.metrics import metrics, status_category
 from app.core.ratelimit import RateLimitRule
 from app.logging import get_logger, request_id_var, session_id_var
 
@@ -71,26 +72,32 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         # The context must stay bound until the access log is written, otherwise the one line
         # that describes the request is the only line without its correlation ids.
         try:
+            route = _route_of(request)
             try:
                 response = await call_next(request)
             except Exception:
+                duration_ms = round((time.perf_counter() - started) * 1000, 2)
                 # Log the category only; the handler produces the client-safe payload.
                 logger.error(
-                    "request.unhandled",
-                    method=request.method,
-                    route=_route_of(request),
-                    duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                    "request.unhandled", method=request.method, route=route, duration_ms=duration_ms
                 )
+                metrics.increment("http_requests_total", route=route, status="5xx")
+                metrics.observe_latency_ms("http_request_duration_ms", duration_ms, route=route)
                 raise
 
+            duration_ms = round((time.perf_counter() - started) * 1000, 2)
             response.headers["X-Request-Id"] = request_id
             logger.info(
                 "request.completed",
                 method=request.method,
-                route=_route_of(request),
+                route=route,
                 status=response.status_code,
-                duration_ms=round((time.perf_counter() - started) * 1000, 2),
+                duration_ms=duration_ms,
             )
+            metrics.increment(
+                "http_requests_total", route=route, status=status_category(response.status_code)
+            )
+            metrics.observe_latency_ms("http_request_duration_ms", duration_ms, route=route)
             return response
         finally:
             request_id_var.reset(request_id_token)

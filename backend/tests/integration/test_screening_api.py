@@ -215,3 +215,28 @@ async def test_candidates_unknown_screening_is_404(client: AsyncClient) -> None:
 async def test_screening_endpoints_require_a_session(client: AsyncClient) -> None:
     response = await client.post("/v1/screening", json={"job_id": "j1"})
     assert response.status_code == 400
+
+
+async def test_destroying_the_session_cancels_still_running_candidate_jobs(
+    client: AsyncClient,
+) -> None:
+    """Closes the Phase 7 known gap (PROJECT_STATUS.md): DELETE /v1/session now cancels any of
+    that session's in-flight screening jobs rather than leaving them to finish (and potentially
+    write) after the session is gone. Enqueues directly on the app's real job queue with an
+    artificially slow job so the race is deterministic rather than timing-dependent."""
+    session_id = await new_session(client, mode="recruiter")
+    queue = client.app.state.job_queue  # type: ignore[attr-defined]
+
+    async def slow_job() -> None:
+        await asyncio.sleep(5)
+
+    await queue.enqueue("candidate-slow", slow_job, session_id=session_id)
+    await asyncio.sleep(0.02)  # let it actually start running
+
+    response = await client.delete("/v1/session", headers={"X-Session-Id": session_id})
+    assert response.status_code == 204
+
+    job = queue.get_state("candidate-slow")
+    assert job is not None
+    assert job.state.value == "failed"
+    assert job.error == "cancelled"

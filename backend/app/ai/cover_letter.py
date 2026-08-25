@@ -33,6 +33,9 @@ class CoverLetterProposal(BaseModel):
     fact_guard_findings: list[str] = []
     available: bool
     unavailable_reason: str | None = None
+    #: Total tokens spent generating this proposal (0 when unavailable) - a count, never content,
+    #: for session-level cost tracking (SECURITY.md section 4).
+    tokens_used: int = 0
 
 
 def _resume_context(resume: Resume, job: JobDescription) -> str:
@@ -63,7 +66,7 @@ async def generate_cover_letter(
             unavailable_reason="AI writing is not configured on this deployment.",
         )
 
-    parsed = await complete_structured(
+    parsed, tokens_used = await complete_structured(
         provider,
         spec=COVER_LETTER,
         user=_resume_context(resume, job),
@@ -73,6 +76,7 @@ async def generate_cover_letter(
         return CoverLetterProposal(
             available=False,
             unavailable_reason="The AI provider did not return a usable cover letter.",
+            tokens_used=tokens_used,
         )
 
     index = FactIndex.build(resume, job)
@@ -84,4 +88,5 @@ async def generate_cover_letter(
         closing=parsed.closing,
         fact_guard_findings=[f.message for f in findings],
         available=True,
+        tokens_used=tokens_used,
     )

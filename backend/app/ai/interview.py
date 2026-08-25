@@ -53,6 +53,9 @@ class InterviewPrepProposal(BaseModel):
     questions: list[InterviewQuestion] = []
     available: bool
     unavailable_reason: str | None = None
+    #: Total tokens spent generating this proposal (0 when unavailable) - a count, never content,
+    #: for session-level cost tracking (SECURITY.md section 4).
+    tokens_used: int = 0
 
 
 def _resume_context(resume: Resume, job: JobDescription) -> str:
@@ -86,7 +89,7 @@ async def generate_interview_questions(
             unavailable_reason="AI writing is not configured on this deployment.",
         )
 
-    parsed = await complete_structured(
+    parsed, tokens_used = await complete_structured(
         provider,
         spec=INTERVIEW_QUESTIONS,
         user=_resume_context(resume, job),
@@ -96,6 +99,7 @@ async def generate_interview_questions(
         return InterviewPrepProposal(
             available=False,
             unavailable_reason="The AI provider did not return a usable question set.",
+            tokens_used=tokens_used,
         )
 
     index = FactIndex.build(resume, job)
@@ -109,4 +113,4 @@ async def generate_interview_questions(
         )
         for q in parsed.questions
     ]
-    return InterviewPrepProposal(questions=questions, available=True)
+    return InterviewPrepProposal(questions=questions, available=True, tokens_used=tokens_used)

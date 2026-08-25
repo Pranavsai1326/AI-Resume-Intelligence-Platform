@@ -14,8 +14,9 @@ from pydantic import BaseModel, ConfigDict
 from app.ai.cover_letter import CoverLetterProposal, generate_cover_letter
 from app.ai.interview import InterviewPrepProposal, generate_interview_questions
 from app.ai.providers import get_llm_provider
-from app.core.deps import ActiveSessionDep, SessionManagerDep, SettingsDep
+from app.core.deps import ActiveSessionDep, RateLimiterDep, SessionManagerDep, SettingsDep
 from app.core.errors import NotFoundError
+from app.core.ratelimit import RateLimitRule
 from app.jobs.models import JobDescription
 from app.logging import get_logger
 from app.matching.embeddings import get_embedding_provider
@@ -50,6 +51,7 @@ async def cover_letter(
     session: ActiveSessionDep,
     manager: SessionManagerDep,
     settings: SettingsDep,
+    limiter: RateLimiterDep,
 ) -> CoverLetterProposal:
     version = await get_version_or_original(
         manager, session, payload.document_id, payload.version_id
@@ -57,10 +59,17 @@ async def cover_letter(
     job = await _get_job(manager, session, payload.job_id)
 
     provider = get_llm_provider(settings)
+    if provider.is_available():
+        await limiter.enforce(
+            RateLimitRule("ai_calls", settings.rate_limit_ai_calls_per_hour, 3600),
+            session.session_id,
+        )
     proposal = await generate_cover_letter(version.resume, job, provider)
 
-    if proposal.available:
-        await manager.increment_counter(session, "ai_calls")
+    if provider.is_available():
+        updated = await manager.increment_counter(session, "ai_calls")
+        if proposal.tokens_used:
+            await manager.increment_counter(updated, "ai_tokens", by=proposal.tokens_used)
     logger.info("career.cover_letter_requested", available=proposal.available)
     return proposal
 
@@ -71,6 +80,7 @@ async def interview_questions(
     session: ActiveSessionDep,
     manager: SessionManagerDep,
     settings: SettingsDep,
+    limiter: RateLimiterDep,
 ) -> InterviewPrepProposal:
     version = await get_version_or_original(
         manager, session, payload.document_id, payload.version_id
@@ -78,10 +88,17 @@ async def interview_questions(
     job = await _get_job(manager, session, payload.job_id)
 
     provider = get_llm_provider(settings)
+    if provider.is_available():
+        await limiter.enforce(
+            RateLimitRule("ai_calls", settings.rate_limit_ai_calls_per_hour, 3600),
+            session.session_id,
+        )
     proposal = await generate_interview_questions(version.resume, job, provider)
 
-    if proposal.available:
-        await manager.increment_counter(session, "ai_calls")
+    if provider.is_available():
+        updated = await manager.increment_counter(session, "ai_calls")
+        if proposal.tokens_used:
+            await manager.increment_counter(updated, "ai_tokens", by=proposal.tokens_used)
     logger.info("career.interview_questions_requested", available=proposal.available)
     return proposal
 

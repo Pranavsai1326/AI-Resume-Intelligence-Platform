@@ -47,14 +47,23 @@ def _try_parse[T: BaseModel](text: str, schema: type[T]) -> tuple[T | None, str 
         return None, f"Did not match the required schema: {exc}"
 
 
+def _usage(response: object) -> int:
+    """Total tokens for one completion - 0 when the provider didn't report usage."""
+    input_tokens = getattr(response, "input_tokens", None) or 0
+    output_tokens = getattr(response, "output_tokens", None) or 0
+    return input_tokens + output_tokens
+
+
 async def complete_structured[T: BaseModel](
     provider: LLMProvider, *, spec: PromptSpec, user: str, schema: type[T]
-) -> T | None:
+) -> tuple[T | None, int]:
     """Run ``spec`` against ``provider`` and parse the result as ``schema``.
 
-    Returns ``None`` on provider unavailability, an empty completion, or a schema mismatch that
-    survives one repair attempt - the caller turns that into an honest "unavailable" response,
-    never a fabricated or partially-filled result.
+    Returns ``(None, tokens_used)`` on provider unavailability, an empty completion, or a schema
+    mismatch that survives one repair attempt - the caller turns a ``None`` into an honest
+    "unavailable" response, never a fabricated or partially-filled result. ``tokens_used`` sums
+    every attempt actually made (including a failed repair try), for session-level cost tracking
+    (SECURITY.md section 4) - it is never content, just a count.
     """
     truncated = user[: spec.max_input_chars]
     response = await provider.complete(
@@ -64,11 +73,12 @@ async def complete_structured[T: BaseModel](
         temperature=spec.temperature,
     )
     if response is None or not response.text.strip():
-        return None
+        return None, 0
+    tokens_used = _usage(response)
 
     parsed, error = _try_parse(response.text, schema)
     if parsed is not None:
-        return parsed
+        return parsed, tokens_used
 
     repair_user = (
         f"{truncated}\n\n---\nYour previous response could not be used: {error}\nPrevious "
@@ -81,9 +91,10 @@ async def complete_structured[T: BaseModel](
         temperature=spec.temperature,
     )
     if repair_response is None or not repair_response.text.strip():
-        return None
+        return None, tokens_used
+    tokens_used += _usage(repair_response)
 
     parsed, error = _try_parse(repair_response.text, schema)
     if parsed is None:
         logger.warning("ai.structured_output_failed", prompt_id=spec.id)
-    return parsed
+    return parsed, tokens_used

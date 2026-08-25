@@ -16,11 +16,13 @@ cleanup, authoritative TTL expiry, a periodic janitor sweep, and a startup sweep
 
 ## Status
 
-**Phase 7 complete** — recruiter screening: upload a job description and a batch of candidate
-resumes, each processed asynchronously (validate, extract, redact, score) without blocking the
-request that started it. Protected and irrelevant attributes are stripped before any score is
-computed - blind review by construction, not a display-time filter - then candidates are ranked,
-compared side by side, and shortlisted. Phase 8 (production hardening) is next.
+**Phase 8 complete** — a production-hardening pass over everything built so far, not a new
+feature: closed a job-cancellation gap, added dedicated rate limits for AI calls and exports,
+wired the AI token-usage counter that existed but was never incremented (catching a real
+counter-clobbering bug along the way), added prompt-injection mitigation text to every LLM prompt
+with a test that fails if a future prompt ships without it, added content-free operational
+metrics (`GET /metrics`), and corrected several claims in SECURITY.md that didn't match what the
+code actually did. Phase 9 (deployment) is next.
 See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Running it locally

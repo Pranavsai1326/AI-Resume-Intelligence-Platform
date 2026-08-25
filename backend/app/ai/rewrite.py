@@ -25,6 +25,9 @@ class RewriteProposal(BaseModel):
     available: bool
     #: Present only when `available` is False.
     unavailable_reason: str | None = None
+    #: Total tokens spent on this call (0 when unavailable) - a count, never content, for
+    #: session-level cost tracking (SECURITY.md section 4).
+    tokens_used: int = 0
 
 
 async def _rewrite(
@@ -62,6 +65,7 @@ async def _rewrite(
         after=after,
         fact_guard_findings=[f.message for f in findings],
         available=True,
+        tokens_used=(response.input_tokens or 0) + (response.output_tokens or 0),
     )
 
 

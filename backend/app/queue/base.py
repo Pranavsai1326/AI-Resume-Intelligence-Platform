@@ -45,11 +45,30 @@ class QueuedJob(BaseModel):
 
 
 class JobQueue(Protocol):
-    async def enqueue(self, job_id: str, work: Callable[[], Awaitable[None]]) -> None:
-        """Schedule ``work`` to run under the queue's concurrency bound. Returns immediately."""
+    async def enqueue(
+        self, job_id: str, work: Callable[[], Awaitable[None]], *, session_id: str | None = None
+    ) -> None:
+        """Schedule ``work`` to run under the queue's concurrency bound. Returns immediately.
+
+        ``session_id``, when given, lets ``cancel_for_session`` find this job later - the queue
+        itself has no other notion of which session owns a job.
+        """
 
     def get_state(self, job_id: str) -> QueuedJob | None:
         """``None`` if no job with this id was ever enqueued on this queue instance."""
 
     async def cancel(self, job_id: str) -> None:
         """Best-effort cancellation - a job already past its work is left as it finished."""
+
+    async def cancel_for_session(self, session_id: str) -> int:
+        """Cancel every still-in-flight job enqueued with this ``session_id``.
+
+        Called from session destruction (``DELETE /v1/session``) so a candidate job does not
+        keep running, and potentially keep writing, after the session that owns it is gone.
+        Returns the number of jobs actually cancelled.
+        """
+
+    def depth(self) -> int:
+        """Count of jobs currently PENDING, PROCESSING, or RETRYING across every session -
+        a content-free operational gauge (ARCHITECTURE.md section 10), never per-session detail.
+        """

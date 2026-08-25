@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     rate_limit_session_create_per_hour: int = Field(default=30, ge=1)
     rate_limit_requests_per_minute: int = Field(default=120, ge=1)
     rate_limit_uploads_per_hour: int = Field(default=120, ge=1)
+    #: Bounds provider spend per anonymous session (SECURITY.md section 4) - covers rewrite,
+    #: tailoring's AI-assisted bullets, cover letters, and interview prep alike.
+    rate_limit_ai_calls_per_hour: int = Field(default=100, ge=1)
+    #: PDF export launches a Chromium process per call - bounded independently of the general
+    #: upload/AI limits so it cannot become its own resource-exhaustion vector.
+    rate_limit_exports_per_hour: int = Field(default=60, ge=1)
 
     # -- Uploads (Phase 2) ---------------------------------------------------------------
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, ge=1024)

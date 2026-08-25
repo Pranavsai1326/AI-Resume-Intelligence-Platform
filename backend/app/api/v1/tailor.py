@@ -14,8 +14,9 @@ from pydantic import BaseModel, ConfigDict
 
 from app.ai.providers import get_llm_provider
 from app.ai.tailor import TailorProposal, apply_proposals, generate_tailor_proposals
-from app.core.deps import ActiveSessionDep, SessionManagerDep, SettingsDep
+from app.core.deps import ActiveSessionDep, RateLimiterDep, SessionManagerDep, SettingsDep
 from app.core.errors import NotFoundError
+from app.core.ratelimit import RateLimitRule
 from app.jobs.models import JobDescription
 from app.logging import get_logger
 from app.matching.embeddings import get_embedding_provider
@@ -50,6 +51,7 @@ async def generate(
     session: ActiveSessionDep,
     manager: SessionManagerDep,
     settings: SettingsDep,
+    limiter: RateLimiterDep,
 ) -> list[TailorProposal]:
     version = await get_version_or_original(
         manager, session, payload.document_id, payload.version_id
@@ -60,10 +62,21 @@ async def generate(
     gaps = compute_skill_gaps(job, version.resume, embedding_provider)
 
     llm_provider = get_llm_provider(settings)
+    if llm_provider.is_available():
+        # Only the AI-assisted path draws on the shared AI budget - deterministic tailoring
+        # (skill reordering, requirement reminders) costs nothing and stays unbounded by it.
+        await limiter.enforce(
+            RateLimitRule("ai_calls", settings.rate_limit_ai_calls_per_hour, 3600),
+            session.session_id,
+        )
     proposals = await generate_tailor_proposals(version.resume, gaps, llm_provider)
 
-    if any(p.requires_ai for p in proposals):
-        await manager.increment_counter(session, "ai_calls")
+    ai_proposal_count = sum(1 for p in proposals if p.requires_ai)
+    if ai_proposal_count:
+        updated = await manager.increment_counter(session, "ai_calls", by=ai_proposal_count)
+        tokens_used = sum(p.tokens_used for p in proposals if p.requires_ai)
+        if tokens_used:
+            await manager.increment_counter(updated, "ai_tokens", by=tokens_used)
 
     logger.info("tailor.proposals_generated", count=len(proposals))
     return proposals

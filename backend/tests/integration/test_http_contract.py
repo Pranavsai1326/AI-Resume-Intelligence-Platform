@@ -61,6 +61,36 @@ async def test_ready_reports_unready_when_store_is_down(tmp_path: object) -> Non
     assert response.json()["ready"] is False
 
 
+async def test_metrics_reports_content_free_counters_and_latencies(client: AsyncClient) -> None:
+    await client.get("/health")  # generate at least one recorded request
+    response = await client.get("/metrics")
+    assert response.status_code == 200
+    body = response.json()
+    assert "queue_depth" in body
+    assert isinstance(body["counters"], dict)
+    assert isinstance(body["latencies"], dict)
+    assert any(key.startswith("http_requests_total") for key in body["counters"])
+    assert any(key.startswith("http_request_duration_ms") for key in body["latencies"])
+
+
+async def test_metrics_is_not_exposed_in_production(tmp_path: object) -> None:
+    settings = Settings(
+        app_env="production",
+        temp_dir=str(tmp_path),
+        session_store_backend="redis",
+        redis_url="redis://localhost:6379/0",
+        debug=False,
+        log_format="json",
+        cors_origins=["https://example.test"],
+    )
+    app = create_app(settings)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as http:
+        async with app.router.lifespan_context(app):
+            response = await http.get("/metrics")
+    assert response.status_code == 404
+
+
 async def test_security_headers_present(client: AsyncClient) -> None:
     headers = (await client.get("/health")).headers
     assert headers["X-Content-Type-Options"] == "nosniff"

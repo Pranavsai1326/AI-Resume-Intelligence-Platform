@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 7 complete → Phase 8 ready to start
+**Last updated:** 2026-08-25 · **Current phase:** Phase 8 complete → Phase 9 ready to start
 
 > Read this file first in every session, then only the architecture docs relevant to the task.
 > Update it after every meaningful implementation change.
@@ -423,27 +423,60 @@ bound Redis TTL expiry already relies on elsewhere - not a new privacy exposure,
 between "destroyed" and "instantly purged from the store" worth closing by wiring session destroy
 to `JobQueue.cancel` for any of that session's in-flight job ids. Tracked for Phase 8.
 
+### Phase 8 — Production hardening
+
+Not a new feature - a review pass over everything built so far, verifying claims already made in
+SECURITY.md and ARCHITECTURE.md against what the code actually does, and closing what didn't
+hold up. Six real defects were found this way, not assumed away.
+
+| Area | What was found and fixed |
+|---|---|
+| Job cancellation gap (Phase 7's documented known limitation) | `DELETE /v1/session` now calls `JobQueue.cancel_for_session` before destroying the namespace. `JobQueue.enqueue` gained an optional `session_id` tag and `InProcessJobQueue` tracks a `session_id -> job_ids` index so cancellation can find the right jobs; `cancel_for_session` consumes (pops) that index so a repeat call is a no-op, not a double-cancel |
+| Missing runtime dependencies | `backend/pyproject.toml`'s `dependencies` list never actually included `anthropic` or `playwright`, despite both being genuinely imported at runtime since Phases 5 - the project only worked because they happened to already be installed in this dev venv. A fresh clone + `pip install -e .` would have silently lost AI writing and PDF export (both "honestly unavailable" rather than crashing, which is exactly why nobody had noticed). Fixed by adding both |
+| No backend dependency lockfile | `pyproject.toml` only declares floating `>=` lower bounds; no `uv.lock`/`requirements.txt`/equivalent exists. SECURITY.md previously claimed pinned lockfiles for "both stacks" - false for the backend. Documented honestly rather than manufactured under time pressure; adopting `uv` or pip-tools is tracked for Phase 9 |
+| No automated dependency audit | SECURITY.md claimed CI runs `pip-audit`/`npm audit` - false, there is no CI pipeline at all yet. Ran both manually instead: `pip-audit` found nothing in the backend; `npm audit --audit-level=high` found 3 real high-severity advisories in `next`'s transitive `postcss`/`sharp` deps, fixable only via a breaking `next` major-version bump - not force-upgraded on the spot given no dedicated regression budget this session; `pip-audit` is now a declared dev dependency so re-running it is intentional, not ad hoc |
+| Prompt injection mitigation was claimed but not implemented | SECURITY.md said "system prompts state that document content is never an instruction" - none of the five actual prompts in `app/ai/prompts.py` said any such thing. Added a shared `_IGNORE_EMBEDDED_INSTRUCTIONS` clause to all five (bumped `1.0.0` -> `1.1.0` per the module's own versioning rule), with `tests/unit/test_prompts.py` asserting every registered prompt actually carries it - a new prompt added later without this text now fails a test rather than shipping silently unprotected |
+| `ai_tokens` counter existed but nothing ever incremented it | `SessionCounters.ai_tokens` has existed since early phases and was already visible via `GET /v1/session`, but no code path ever wrote to it - AI spend was untracked despite SECURITY.md claiming otherwise. Wired `tokens_used` through `app/ai/structured.py` (return type changed to `tuple[T \| None, int]`, summing both the original and repair attempt), `rewrite.py`, `tailor.py`, `cover_letter.py`, and `interview.py`, then incremented `ai_tokens` at each of the four calling endpoints. **A real bug was caught by the first test written for this**: two sequential `increment_counter(session, ...)` calls using the same stale `session` object silently discarded the first increment, since each call bases its update on the `meta` it's given rather than the store's current state - the second call's `_persist` overwrote the first. Fixed by chaining the returned updated `SessionMeta` into the second call at all four sites (`ai.py`, `career.py` x2, `tailor.py`) |
+| No dedicated rate limits for AI calls or exports | SECURITY.md's rate-limit table listed "AI calls: 100/hour" and "Export: 60/hour" as if real; only session-create and upload limits were actually wired. Added `RATE_LIMIT_AI_CALLS_PER_HOUR` (default 100) and `RATE_LIMIT_EXPORTS_PER_HOUR` (default 60), enforced in `/v1/ai/rewrite`, `/v1/tailor` (only when the AI-assisted path actually runs - deterministic tailoring stays unbounded, since it costs nothing), `/v1/cover-letter`, `/v1/interview/questions`, and `/v1/export` |
+| No observability beyond structured logs | Added `app/core/metrics.py`: an in-process, content-free registry (counters + latency averages, every label from a fixed closed set - route template, status category, job state - never user content). Wired into `RequestContextMiddleware` (every request) and `app.queue.inprocess` (every screening job: completed/failed/retried counts and duration). Exposed as JSON via `GET /metrics` (not a Prometheus exporter - none is configured in this environment), disabled in production the same way `/docs` is, since there's no auth layer to gate it behind otherwise. Queue depth (jobs currently in flight) is included; temp-storage bytes, cleanup success/failure, and active session count are explicitly **not yet wired** - the last needs a namespace-scan capability `SessionStore` doesn't expose (a full key scan is a real cost on Redis), so it wasn't added as a memory-backend-only half-measure |
+| Bulk pipeline performance, unmeasured until now | Ran 100 candidates (`MAX_BULK_RESUMES`) through a live app instance end to end: upload request 0.18 s, full processing (all 100 candidates, worker concurrency 4) 0.31 s, ranking fetch for all 100 9 ms, zero failures. Caveat stated plainly: measured with small synthetic TXT resumes and `embedding_backend=none` (no real PDF extraction or embedding cost) - a realistic PDF-plus-embeddings production load will cost meaningfully more per candidate, but this confirms the queue/storage/ranking architecture itself has no obvious bottleneck at the documented scale ceiling |
+
+**Verification** - all green:
+
+```
+backend    554 passed, 10 skipped (Redis, no server present)   ruff clean   mypy clean
+```
+
+No frontend code changed this phase beyond adding the new `tokens_used` field to four TypeScript
+proposal interfaces for type accuracy (`frontend/lib/api-client.ts`) - Phase 8 was a backend/docs
+hardening pass, not a feature phase, so `npm test`/`typecheck`/`lint`/`build` were re-run to
+confirm nothing broke but no new frontend tests were needed.
+
 ## In progress
 
-Nothing. Phase 7 is committed.
+Nothing. Phase 8 is committed.
 
-## Next task — Phase 8 (production hardening)
+## Next task — Phase 9 (deployment)
 
-1. Close the job-cancellation-on-session-destroy gap noted above
-2. Security hardening pass: review SECURITY.md's checklist end to end now that every module it
-   describes actually exists
-3. Rate limits and retries tuned against realistic load, not just development defaults
-4. Performance: profile the bulk screening pipeline under a full `MAX_BULK_RESUMES`-sized batch
-5. Monitoring: latency, error rate by category, queue depth, worker failures - metrics.md work
-   the architecture docs have described since Phase 0 but nothing has emitted yet
-6. AI evaluation and cost tracking now that four LLM-backed features exist (rewrite, tailor,
-   cover letter, interview prep)
+1. CI pipeline: lint, type-check, test, `pip-audit`, `npm audit` on every push - closes several
+   of Phase 8's "not yet automated" gaps at once
+2. Adopt a backend dependency lockfile (`uv` or pip-tools) - Phase 8 found this missing
+3. Resolve the 3 high-severity `npm audit` findings (transitive `postcss`/`sharp` via `next`) via
+   a planned, tested major-version upgrade rather than a forced one mid-hardening-pass
+4. Environments (dev/staging/production config), health checks wired to a real orchestrator,
+   DEPLOYMENT.md and TESTING.md
+5. A real metrics exporter (Prometheus or equivalent) behind the recording calls Phase 8 already
+   added, plus the "not yet wired" gauges noted above (temp-storage bytes, cleanup success/
+   failure, active session count - the last needs a `SessionStore` capability that doesn't exist
+   yet)
+6. Convert the `ai_tokens` counter from observability-only into an actual enforced per-session
+   budget, if wanted
 
 ## Planned
 
-| Phase | Scope |
-|---|---|
-| 9 | Deployment: environments, CI/CD, health checks, monitoring, smoke tests, DEPLOYMENT.md + TESTING.md |
+Nothing beyond Phase 9 - it's the last phase in the original roadmap (PRD.md's M1-M14 modules and
+the 9-phase build order are now fully scheduled). Anything found after Phase 9 ships becomes a new
+entry here rather than an unscheduled surprise.
 
 ## Architecture decisions
 
@@ -482,8 +515,11 @@ No Docker, no Redis, no database and no API key is needed to run any of the abov
 | Redis not installed | Redis backend unexercised locally | 10 conformance tests skip with a clear reason; run them with `TEST_REDIS_URL` set. Memory backend covers development |
 | Tesseract not installed | Scanned/image-only PDFs fail with `422 NO_EXTRACTABLE_TEXT` | Provider abstraction built in Phase 2 (`app.documents.extract.ocr`); feature-detected and reported false by `/ready`, honest error rather than silent failure or fake text |
 | No LLM key | Layer 3 (AI writing, tailoring, cover letters, interview prep) cannot run | `/ready` reports `llm: false`. `NullLLMProvider` reports every AI feature honestly unavailable rather than erroring or fabricating; deterministic tailoring (skill reordering, requirement reminders) and learning priorities work with no key at all. Semantic matching (Phase 4) needed no key and is confirmed working — ADR-0005's bet on local ONNX embeddings paid off |
-| Job cancellation on session destroy is passive | A candidate job that finishes after its session was destroyed can leave an orphaned, unreachable store key for up to `CANDIDATE_TTL_SECONDS` (1 hour) | Documented in detail under Phase 7 above; tracked for Phase 8 (wire `SessionManager.destroy` to `JobQueue.cancel` for the session's in-flight job ids) |
-| No CI pipeline yet | Gates run locally only | Phase 9 |
+| No CI pipeline yet | Gates run locally only; `pip-audit`/`npm audit` run manually, not automatically | Phase 9 |
+| No backend dependency lockfile | Reproducible backend installs depend on nobody upgrading a dependency between two `pip install`s | Found in Phase 8's security review; adopting `uv` or pip-tools tracked for Phase 9 |
+| 3 high-severity `npm audit` findings | Transitive `postcss`/`sharp` vulnerabilities via `next`, fixable only via a breaking `next` major-version upgrade | Found in Phase 8, deliberately not force-upgraded mid-hardening-pass without a regression budget; tracked for a planned, tested upgrade in Phase 9 |
+| `ai_tokens` is tracked but not enforced | A session can exceed a token budget as long as it stays under the AI-call-count limit | Wired for observability in Phase 8 (`GET /v1/session` counters); converting it into an actual enforced cap is optional Phase 9 follow-up |
+| Active session count, temp-storage bytes, and cleanup success/failure are not in `/metrics` | Phase 8's metrics registry covers request latency and screening job outcomes only | Active session count needs a `SessionStore` namespace-scan capability that doesn't exist yet (a full key scan is a real cost on Redis) - not added as a memory-backend-only half-measure. Tracked for Phase 9 alongside a real metrics exporter |
 
 ## Current blockers
 

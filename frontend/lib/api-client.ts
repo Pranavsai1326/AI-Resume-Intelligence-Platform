@@ -357,6 +357,7 @@ export interface RewriteProposal {
   fact_guard_findings: string[];
   available: boolean;
   unavailable_reason: string | null;
+  tokens_used: number;
 }
 
 export interface TailorTarget {
@@ -376,6 +377,7 @@ export interface TailorProposal {
   after: string | string[] | null;
   fact_guard_findings: string[];
   requires_ai: boolean;
+  tokens_used: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -389,6 +391,7 @@ export interface CoverLetterProposal {
   fact_guard_findings: string[];
   available: boolean;
   unavailable_reason: string | null;
+  tokens_used: number;
 }
 
 export type InterviewQuestionCategory =
@@ -409,6 +412,7 @@ export interface InterviewPrepProposal {
   questions: InterviewQuestion[];
   available: boolean;
   unavailable_reason: string | null;
+  tokens_used: number;
 }
 
 export interface LearningPriority {

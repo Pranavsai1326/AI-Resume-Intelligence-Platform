@@ -11,7 +11,13 @@ import json
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 
-from app.core.deps import ActiveSessionDep, RateLimiterDep, SessionManagerDep, SettingsDep
+from app.core.deps import (
+    ActiveSessionDep,
+    JobQueueDep,
+    RateLimiterDep,
+    SessionManagerDep,
+    SettingsDep,
+)
 from app.core.middleware import client_identity
 from app.core.ratelimit import RateLimitRule
 from app.logging import get_logger
@@ -61,16 +67,24 @@ async def heartbeat(session: ActiveSessionDep, manager: SessionManagerDep) -> Se
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(
-    request: Request, manager: SessionManagerDep
+    request: Request, manager: SessionManagerDep, queue: JobQueueDep
 ) -> Response:
     """Destroy the session and everything beneath its namespace.
 
     Idempotent and always 204: a client tearing down should never see an error, and the reply
-    must not reveal whether the id existed.
+    must not reveal whether the id existed. Cancels any of this session's still-running
+    screening candidate jobs first (ARCHITECTURE.md section 8) - closes the gap where a job
+    could keep running, and keep trying to write, after the session that owns it is gone.
     """
     session_id = request.headers.get("x-session-id", "")
+    jobs_cancelled = await queue.cancel_for_session(session_id) if session_id else 0
     removed = await manager.destroy(session_id)
-    logger.info("session.destroyed", objects_removed=removed, trigger="explicit")
+    logger.info(
+        "session.destroyed",
+        objects_removed=removed,
+        jobs_cancelled=jobs_cancelled,
+        trigger="explicit",
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

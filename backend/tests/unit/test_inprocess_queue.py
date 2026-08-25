@@ -120,3 +120,59 @@ async def test_cancel_marks_in_flight_job_failed() -> None:
 async def test_cancel_unknown_job_is_a_no_op() -> None:
     queue = InProcessJobQueue(max_concurrency=1)
     await queue.cancel("does-not-exist")  # must not raise
+
+
+async def test_cancel_for_session_cancels_only_that_sessions_in_flight_jobs() -> None:
+    queue = InProcessJobQueue(max_concurrency=3)
+
+    async def slow() -> None:
+        await asyncio.sleep(5)
+
+    await queue.enqueue("a1", slow, session_id="session-a")
+    await queue.enqueue("a2", slow, session_id="session-a")
+    await queue.enqueue("b1", slow, session_id="session-b")
+    await asyncio.sleep(0.01)  # let them start
+
+    cancelled = await queue.cancel_for_session("session-a")
+
+    assert cancelled == 2
+    assert queue.get_state("a1").state == JobState.FAILED  # type: ignore[union-attr]
+    assert queue.get_state("a2").state == JobState.FAILED  # type: ignore[union-attr]
+    assert queue.get_state("b1").state == JobState.PROCESSING  # type: ignore[union-attr]
+
+
+async def test_cancel_for_session_does_not_touch_already_completed_jobs() -> None:
+    queue = InProcessJobQueue(max_concurrency=2)
+
+    async def fast() -> None:
+        await asyncio.sleep(0.01)
+
+    await queue.enqueue("c1", fast, session_id="session-c")
+    await _wait_until_settled(queue, "c1")
+
+    cancelled = await queue.cancel_for_session("session-c")
+
+    assert cancelled == 0
+    assert queue.get_state("c1").state == JobState.COMPLETED  # type: ignore[union-attr]
+
+
+async def test_cancel_for_session_with_no_jobs_is_a_no_op() -> None:
+    queue = InProcessJobQueue(max_concurrency=1)
+    assert await queue.cancel_for_session("no-such-session") == 0
+
+
+async def test_cancel_for_session_forgets_the_session_afterwards() -> None:
+    """Calling it twice must not double-count or re-cancel - the session's job set is consumed."""
+    queue = InProcessJobQueue(max_concurrency=1)
+
+    async def slow() -> None:
+        await asyncio.sleep(5)
+
+    await queue.enqueue("d1", slow, session_id="session-d")
+    await asyncio.sleep(0.01)
+
+    first = await queue.cancel_for_session("session-d")
+    second = await queue.cancel_for_session("session-d")
+
+    assert first == 1
+    assert second == 0

@@ -8,8 +8,10 @@ for different behaviour.
 
 from __future__ import annotations
 
+import pytest
 from httpx import AsyncClient
 
+from tests.ai_fakes import FakeLLMProvider
 from tests.conftest import new_session
 from tests.fixtures import make_txt_bytes
 
@@ -81,3 +83,29 @@ async def test_rewrite_rejects_invalid_kind(client: AsyncClient) -> None:
         headers={"X-Session-Id": session_id},
     )
     assert response.status_code == 422
+
+
+async def test_rewrite_with_an_available_provider_tracks_ai_calls_and_tokens(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 8: session counters must reflect real provider usage, not just count requests
+    regardless of whether a call actually happened - `ai_tokens` previously existed on the
+    counters model but nothing ever incremented it."""
+    fake = FakeLLMProvider(response_text="Migrated the billing pipeline to event sourcing.")
+    monkeypatch.setattr("app.api.v1.ai.get_llm_provider", lambda settings: fake)
+
+    session_id = await new_session(client)
+    document_id = await _upload_document(client, session_id)
+
+    response = await client.post(
+        "/v1/ai/rewrite",
+        json={"document_id": document_id, "kind": "bullet", "text": "Built the service."},
+        headers={"X-Session-Id": session_id},
+    )
+    assert response.status_code == 200
+    assert response.json()["available"] is True
+
+    session_state = await client.get("/v1/session", headers={"X-Session-Id": session_id})
+    counters = session_state.json()["counters"]
+    assert counters["ai_calls"] == 1
+    assert counters["ai_tokens"] == 20  # FakeLLMProvider reports 10 input + 10 output

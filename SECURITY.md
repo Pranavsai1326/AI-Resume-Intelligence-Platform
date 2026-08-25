@@ -1,6 +1,6 @@
 # SECURITY
 
-**Last updated:** 2026-08-25 (Phase 7)
+**Last updated:** 2026-08-25 (Phase 8)
 
 The platform accepts untrusted binary documents from anonymous users and forwards derived text to an
 AI provider. Those two facts drive the whole security posture.
@@ -61,19 +61,26 @@ Uploaded files are hostile input until proven otherwise:
 
 ## 4. Rate limiting and abuse control
 
-Token-bucket limits, backed by the same store as sessions, applied per IP and per session:
+Fixed-window limits, backed by the same store as sessions, applied per IP or per session as
+noted - all confirmed real and tested (`backend/tests/integration/test_ai_export_ratelimits.py`,
+`test_screening_api.py`), not aspirational:
 
-| Bucket | Default |
-|---|---|
-| Session creation per IP | 30 / hour |
-| Uploads per session | 120 / hour |
-| Bulk resumes per session | 100 concurrent max, `MAX_BULK_RESUMES` |
-| AI calls per session | 100 / hour, plus a token budget |
-| Export per session | 60 / hour |
-| Global request rate per IP | configurable, `429` with `Retry-After` |
+| Bucket | Default | Applies to |
+|---|---|---|
+| Session creation | 30 / hour | per IP |
+| Uploads | 120 / hour | per session; also covers bulk screening uploads (one enforcement per batch call, not per file within it) |
+| Candidates per screening | `MAX_BULK_RESUMES` (100), cumulative across calls | per screening context |
+| Screening worker concurrency | `SCREENING_WORKER_CONCURRENCY` (4) | per process - how many candidate jobs run at once, not a request-facing limit |
+| AI calls | `RATE_LIMIT_AI_CALLS_PER_HOUR` (100) / hour | per session; covers rewrite, tailoring's AI-assisted bullets, cover letters, and interview prep alike - only counted when a provider is actually configured, since deterministic-only calls cost nothing to bound |
+| Exports | `RATE_LIMIT_EXPORTS_PER_HOUR` (60) / hour | per session |
+| Global request rate | configurable | per IP, `429` with `Retry-After` |
 
-AI spend is additionally bounded by per-session token counters so one anonymous session cannot
-exhaust the provider budget. Limits are configuration, tuned before production launch.
+Per-session token usage is tracked (`SessionCounters.ai_tokens`, visible via `GET /v1/session`)
+but **not yet enforced as a hard cap** - a session can still exceed a token budget as long as it
+stays under the call-count limit above. The counter exists for cost observability today;
+converting it into an actual enforced budget (reject once cumulative tokens cross a threshold) is
+tracked as a Phase 9 follow-up, not yet built. Limits are configuration, tuned before production
+launch.
 
 ## 5. HTTP hardening
 
@@ -94,11 +101,19 @@ exhaust the provider budget. Limits are configuration, tuned before production l
   document/AI text is treated as text, not markup.
 * Export templates escape all user content; PDF rendering runs with a sandboxed browser context,
   no network access, and a render timeout.
-* **Prompt injection:** uploaded documents may contain instructions aimed at the model. Mitigations:
-  user content is passed in clearly delimited, labelled fields marked as data; system prompts state
-  that document content is never an instruction; outputs are schema-constrained; and no model output
-  is allowed to trigger a side effect — the LLM cannot call tools, change scores, alter weights,
-  modify session state, or apply an edit. Applying a proposal is always an explicit user action.
+* **Prompt injection:** uploaded documents may contain instructions aimed at the model.
+  Mitigations, all confirmed in `app/ai/prompts.py` and `backend/tests/unit/test_prompts.py`
+  (not aspirational): user content is passed as a separate user-role message with descriptive
+  labels ("Job title:", "Candidate summary:"), never concatenated into the system prompt itself;
+  every one of the five prompts explicitly instructs the model to treat resume/job text as data
+  to work with, never as instructions to obey, and to disregard anything embedded in it that
+  looks like a command; the two structured-output prompts (cover letter, interview questions)
+  are additionally schema-validated on the way back (AI_ARCHITECTURE.md section 4); and no model
+  output is allowed to trigger a side effect anywhere in the system — the LLM cannot call tools,
+  change scores, alter weights, modify session state, or apply an edit. Applying a proposal is
+  always an explicit user action. This reduces the attack's usefulness (there is nothing
+  privileged to steal or corrupt even if an injection partially succeeds); it does not claim to
+  make an LLM immune to being talked to strangely.
 * Generated file names are sanitised; `Content-Disposition` values are quoted and stripped of CR/LF.
 
 ## 7. Secrets
@@ -106,9 +121,14 @@ exhaust the provider budget. Limits are configuration, tuned before production l
 * Provider keys come from environment or a secret manager only. No key is committed, printed,
   logged, or included in an error response or health payload.
 * `/ready` reports capability booleans (`llm: true`), never key material or provider endpoints.
-* Startup validates that required secrets exist for the selected providers; a missing key selects
-  the Null provider (honest degradation) rather than crashing in production traffic.
-* Repository has a secret-scanning pre-commit hook and CI check.
+* Startup validates that required secrets exist for the selected providers in production
+  (`Settings.validate_runtime`: `LLM_PROVIDER=anthropic` without `ANTHROPIC_API_KEY` refuses to
+  boot); a missing key in a non-production environment selects the Null provider (honest
+  degradation) instead.
+* **Not yet built:** an automated secret-scanning pre-commit hook or CI check. Every commit in
+  this project has so far been manually reviewed for secrets before staging (an explicit step in
+  each phase's workflow) - real, but not the automated, always-on guarantee this line originally
+  implied. Tracked for Phase 9 alongside the CI pipeline itself.
 
 ## 8. Error handling
 
@@ -120,7 +140,22 @@ the client.
 
 ## 9. Dependency and supply-chain security
 
-* Pinned lockfiles for both stacks; CI runs `pip-audit` and `npm audit` and fails on high severity.
+* Frontend is pinned via `package-lock.json` - reproducible installs, confirmed real.
+* **Backend is not pinned to a lockfile** - `pyproject.toml` declares floating `>=` lower bounds
+  only (e.g. `fastapi>=0.115`), and no lockfile (`uv.lock`, `requirements.txt`, or equivalent)
+  exists in the repository. Reproducible backend installs currently depend on nobody having
+  upgraded a dependency between two `pip install`s - real drift risk, not yet closed. Fixing this
+  (adopting `uv` or pip-tools and committing a lockfile) is tracked for Phase 9.
+* **Automated auditing is not yet wired in** - there is no CI pipeline at all in this project so
+  far (PROJECT_STATUS.md's Known Issues), so neither `pip-audit` nor `npm audit` runs
+  automatically. Both were run manually against the current environment while writing this
+  section: `pip-audit` reported no known vulnerabilities in the backend's installed packages;
+  `npm audit --audit-level=high` reported 3 high-severity advisories, all in `next`'s transitive
+  `postcss`/`sharp` dependencies (XSS in PostCSS's CSS stringifier, a libvips CVE in `sharp`) -
+  see PROJECT_STATUS.md's Known Issues for why this wasn't force-upgraded on the spot. `pip-audit`
+  is now a declared dev dependency (`backend/pyproject.toml`'s `dev` extra) so re-running it is a
+  documented, intentional step rather than an ad-hoc local install; wiring both commands into an
+  actual CI gate is still Phase 9 work, alongside the CI pipeline itself.
 * Dependency additions are justified in review — every new parser is new attack surface.
 * Frontend has no CDN-loaded scripts; assets are self-hosted.
 * Container images (when introduced in Phase 9) run as a non-root user with a read-only root
@@ -152,5 +187,12 @@ As built in Phase 7 (`app/screening/redact.py`):
 
 Security tests live beside the privacy suite: oversized upload rejection, MIME spoofing, zip bomb,
 XXE payload, malformed PDF, path traversal in filenames, cross-session access attempts, rate-limit
-enforcement, security-header presence, error sanitisation (no stack trace, no path), and prompt
-injection samples that attempt to make the model emit instructions or unsupported claims.
+enforcement (including the AI-call and export limits added in Phase 8), security-header presence,
+and error sanitisation (no stack trace, no path). Prompt-injection coverage
+(`backend/tests/unit/test_prompts.py`) asserts every registered prompt actually carries the
+disregard-embedded-instructions and no-invention clauses, rather than running adversarial samples
+against a live model - there is no LLM in the test environment to run them against, and doing so
+against a real provider would be flaky, slow, and costly to run on every test invocation. The
+fact guard (`app/ai/fact_guard.py`, tested in `test_fact_guard.py`) is the control that actually
+catches a fabricated claim that gets past the prompt, using a fake provider that can be told to
+emit exactly such a claim.

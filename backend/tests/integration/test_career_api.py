@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
+import pytest
 from httpx import AsyncClient
 
+from tests.ai_fakes import FakeLLMProvider
 from tests.conftest import new_session
 from tests.fixtures import make_txt_bytes
 
@@ -92,3 +96,36 @@ async def test_career_endpoints_require_a_session(client: AsyncClient) -> None:
     for path in ("/v1/cover-letter", "/v1/interview/questions", "/v1/learning-priorities"):
         response = await client.post(path, json={"document_id": "d1", "job_id": "j1"})
         assert response.status_code == 400, path
+
+
+async def test_cover_letter_with_an_available_provider_tracks_ai_calls_and_tokens(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 8: proves the ai_calls/ai_tokens increment_counter chaining fix (a stale-session
+    bug caught by the equivalent test for /v1/ai/rewrite) also applies correctly here."""
+    fake = FakeLLMProvider(
+        response_text=json.dumps(
+            {
+                "salutation": "Dear Hiring Team",
+                "body_paragraphs": ["I am excited to apply."],
+                "closing": "Sincerely,",
+            }
+        )
+    )
+    monkeypatch.setattr("app.api.v1.career.get_llm_provider", lambda settings: fake)
+
+    session_id = await new_session(client)
+    document_id, job_id = await _setup_document_and_job(client, session_id)
+
+    response = await client.post(
+        "/v1/cover-letter",
+        json={"document_id": document_id, "job_id": job_id},
+        headers={"X-Session-Id": session_id},
+    )
+    assert response.status_code == 200
+    assert response.json()["available"] is True
+
+    session_state = await client.get("/v1/session", headers={"X-Session-Id": session_id})
+    counters = session_state.json()["counters"]
+    assert counters["ai_calls"] == 1
+    assert counters["ai_tokens"] == 20

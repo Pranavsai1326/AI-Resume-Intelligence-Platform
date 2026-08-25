@@ -12,8 +12,9 @@ from typing import Literal
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict
 
-from app.core.deps import ActiveSessionDep, SessionManagerDep
+from app.core.deps import ActiveSessionDep, RateLimiterDep, SessionManagerDep, SettingsDep
 from app.core.errors import ServiceUnavailableError
+from app.core.ratelimit import RateLimitRule
 from app.export.docx import render_resume_docx
 from app.export.pdf import render_resume_pdf
 from app.logging import get_logger
@@ -46,8 +47,15 @@ def _safe_filename(label: str, extension: str) -> str:
 
 @router.post("")
 async def export_resume(
-    payload: ExportResumeRequest, session: ActiveSessionDep, manager: SessionManagerDep
+    payload: ExportResumeRequest,
+    session: ActiveSessionDep,
+    manager: SessionManagerDep,
+    settings: SettingsDep,
+    limiter: RateLimiterDep,
 ) -> Response:
+    await limiter.enforce(
+        RateLimitRule("exports", settings.rate_limit_exports_per_hour, 3600), session.session_id
+    )
     version = await get_version_or_original(
         manager, session, payload.document_id, payload.version_id
     )

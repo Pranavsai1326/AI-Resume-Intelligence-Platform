@@ -1,6 +1,6 @@
 # PRIVACY ARCHITECTURE
 
-**Last updated:** 2026-08-25 (Phase 7)
+**Last updated:** 2026-08-25 (Phase 8)
 
 Privacy here is an architectural property, not a policy sentence. The guarantee is: *no code path
 exists that writes user content to durable storage.* This document defines that model, the layers

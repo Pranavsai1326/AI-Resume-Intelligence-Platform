@@ -29,31 +29,34 @@ class _Schema(BaseModel):
 
 
 async def test_returns_none_when_provider_unavailable() -> None:
-    result = await complete_structured(
+    result, tokens_used = await complete_structured(
         NullLLMProvider(), spec=_SPEC, user="hello", schema=_Schema
     )
     assert result is None
+    assert tokens_used == 0
 
 
 async def test_returns_none_when_provider_fails() -> None:
-    result = await complete_structured(
+    result, tokens_used = await complete_structured(
         FailingLLMProvider(), spec=_SPEC, user="hello", schema=_Schema
     )
     assert result is None
+    assert tokens_used == 0
 
 
 async def test_parses_valid_json_on_first_try() -> None:
     fake = FakeLLMProvider(response_text=json.dumps({"name": "widget", "count": 3}))
-    result = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
+    result, tokens_used = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
     assert result == _Schema(name="widget", count=3)
     assert len(fake.calls) == 1
+    assert tokens_used == 20  # FakeLLMProvider reports 10 input + 10 output per call
 
 
 async def test_strips_markdown_code_fence() -> None:
     fake = FakeLLMProvider(
         response_text='```json\n{"name": "widget", "count": 3}\n```'
     )
-    result = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
+    result, _tokens_used = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
     assert result == _Schema(name="widget", count=3)
 
 
@@ -61,7 +64,7 @@ async def test_extracts_json_object_surrounded_by_prose() -> None:
     fake = FakeLLMProvider(
         response_text='Sure, here you go: {"name": "widget", "count": 3} hope that helps!'
     )
-    result = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
+    result, _tokens_used = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
     assert result == _Schema(name="widget", count=3)
 
 
@@ -69,21 +72,24 @@ async def test_repairs_invalid_json_on_second_attempt() -> None:
     responses = iter(["not json at all", json.dumps({"name": "widget", "count": 3})])
 
     fake = FakeLLMProvider(transform=lambda _user: next(responses))
-    result = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
+    result, tokens_used = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
     assert result == _Schema(name="widget", count=3)
     assert len(fake.calls) == 2
     assert "could not be used" in fake.calls[1]["user"]  # type: ignore[operator]
+    assert tokens_used == 40  # both attempts counted
 
 
 async def test_gives_up_after_one_failed_repair_attempt() -> None:
     fake = FakeLLMProvider(response_text="still not json")
-    result = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
+    result, tokens_used = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
     assert result is None
     assert len(fake.calls) == 2  # original attempt + exactly one repair, never more
+    assert tokens_used == 40  # both failed attempts still cost tokens
 
 
 async def test_schema_mismatch_is_treated_as_a_failure_too() -> None:
     fake = FakeLLMProvider(response_text=json.dumps({"name": "widget"}))  # missing "count"
-    result = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
+    result, tokens_used = await complete_structured(fake, spec=_SPEC, user="hello", schema=_Schema)
     assert result is None
     assert len(fake.calls) == 2
+    assert tokens_used == 40

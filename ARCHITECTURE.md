@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-**Last updated:** 2026-08-25 (Phase 7) · Companion docs: [PRIVACY_ARCHITECTURE.md](PRIVACY_ARCHITECTURE.md),
+**Last updated:** 2026-08-25 (Phase 8) · Companion docs: [PRIVACY_ARCHITECTURE.md](PRIVACY_ARCHITECTURE.md),
 [AI_ARCHITECTURE.md](AI_ARCHITECTURE.md), [SECURITY.md](SECURITY.md), [API.md](API.md)
 
 ## 1. System shape
@@ -236,10 +236,24 @@ Every external dependency is assumed to fail. Each has a defined, honest degrada
 
 ## 10. Health and observability
 
-`/health` (liveness, no dependency checks) and `/ready` (session store reachable, embedding runtime
-loaded, capability map). Metrics are content-free: API latency, error rate by category, queue depth,
-worker failures, processing duration, AI latency, token counts, temp-storage bytes, cleanup
-success/failure, active session count. No metric or log line carries resume content.
+`/health` (liveness, no dependency checks) and `/ready` (session store reachable, embedding
+runtime loaded, capability map).
+
+As built in Phase 8 (`app/core/metrics.py`): `/metrics` returns a JSON snapshot of an in-process,
+content-free registry - not a Prometheus exporter, since no metrics backend is configured in this
+environment. Every label is drawn from a fixed, closed set (route template, status category, job
+state), never user content, matching PRIVACY_ARCHITECTURE.md section 9. Recorded so far:
+`http_requests_total{route,status}` and `http_request_duration_ms{route}` (every request, via
+`RequestContextMiddleware`), `screening_jobs_total{status}`, `screening_jobs_retried_total`, and
+`screening_job_duration_ms{status}` (every candidate job, via `app.queue.inprocess`), plus
+`queue_depth` (jobs currently PENDING/PROCESSING/RETRYING, gauge). **Not yet wired:** temp-storage
+bytes, cleanup success/failure, and active session count - the last needs a namespace-scan
+capability the `SessionStore` protocol doesn't expose yet (a full key scan is a real cost on
+Redis), so it wasn't added as a half-measure that only works on the memory backend. `/metrics` is
+disabled in production (`404`, matching `/docs`) since there is no auth layer in this app to gate
+route-level latency data behind; a production deployment should scrape it from an internal
+network path once a real exporter replaces this JSON endpoint (Phase 9). No metric or log line
+carries resume content.
 
 ## 11. Configuration
 

@@ -59,6 +59,9 @@ class TailorProposal(BaseModel):
     after: str | list[str] | None = None
     fact_guard_findings: list[str] = []
     requires_ai: bool
+    #: Total tokens spent generating this one proposal - always 0 for deterministic proposals,
+    #: a count (never content) for session-level cost tracking (SECURITY.md section 4).
+    tokens_used: int = 0
 
 
 def _generate_deterministic_proposals(
@@ -156,6 +159,7 @@ async def _generate_bullet_rewrite_proposals(
                 after=after,
                 fact_guard_findings=[f.message for f in findings],
                 requires_ai=True,
+                tokens_used=(response.input_tokens or 0) + (response.output_tokens or 0),
             )
         )
     return proposals

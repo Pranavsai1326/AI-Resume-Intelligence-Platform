@@ -1,6 +1,6 @@
 # AI ARCHITECTURE
 
-**Last updated:** 2026-08-25 (Phase 6)
+**Last updated:** 2026-08-25 (Phase 8)
 
 ## 1. Three layers, in order of preference
 
@@ -49,11 +49,14 @@ Anthropic | OpenAI-compatible | Null(unavailable)      fastembed(local) | remote
 
 Every prompt is a versioned, frozen `PromptSpec` record: `system` prompt, `max_input_chars`,
 `max_output_tokens`, `temperature`. Specs live in `app/ai/prompts.py` as data, not inline strings
-scattered through business logic — `REWRITE_BULLET`, `REWRITE_SUMMARY`, `TAILOR_BULLET`, sharing
-one explicit anti-invention instruction string forbidding fabricated numbers, employers,
-technologies, dates, and outcomes. Changing a prompt is a one-line edit to its `PromptSpec`;
-formal prompt versioning (a version string tracked across changes, re-run evaluations per bump) is
-not yet built — see section 10.
+scattered through business logic — `REWRITE_BULLET`, `REWRITE_SUMMARY`, `TAILOR_BULLET`,
+`COVER_LETTER`, `INTERVIEW_QUESTIONS` (Phase 6), all five sharing one explicit anti-invention
+instruction string (forbidding fabricated numbers, employers, technologies, dates, outcomes) and,
+since Phase 8, one explicit prompt-injection mitigation string telling the model that resume/job
+text is data to work with, never instructions to obey (SECURITY.md section 6;
+`tests/unit/test_prompts.py` asserts every registered prompt actually carries both). Changing a
+prompt's wording bumps its version - the Phase 8 addition took every prompt from `1.0.0` to
+`1.1.0`. Formal evaluation re-runs keyed to that version bump are not yet built — see section 10.
 
 ## 4. Structured output and validation
 

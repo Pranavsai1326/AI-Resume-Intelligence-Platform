@@ -1,6 +1,6 @@
 # API
 
-**Version:** v1 · **Base path:** `/v1` · **Last updated:** 2026-08-25 (Phase 7)
+**Version:** v1 · **Base path:** `/v1` · **Last updated:** 2026-08-25 (Phase 8)
 
 ## Conventions
 
@@ -414,3 +414,4 @@ dependency and is always available.
 |---|---|---|
 | `GET` | `/health` | Liveness. No dependency checks. |
 | `GET` | `/ready` | Readiness: session store reachable, embedding runtime loaded, plus a capability map (`ocr`, `llm`, `embeddings`, `pdf_export`) so the frontend can hide or honestly disable features. |
+| `GET` | `/metrics` | Phase 8: content-free JSON snapshot of request counts/latency and screening job outcomes (`app/core/metrics.py`) - not a Prometheus exporter. `404` in production (no auth layer exists to gate it behind); see ARCHITECTURE.md section 10. |
