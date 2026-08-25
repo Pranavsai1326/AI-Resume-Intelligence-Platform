@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from app.jobs.models import JobDescription
 from app.resume.models import Resume
 
 _NUMBER_RE = re.compile(r"\b\d[\d,.]*%?\b")
@@ -48,8 +49,21 @@ class FactIndex:
     words: set[str] = field(default_factory=set)
 
     @staticmethod
-    def build(resume: Resume) -> FactIndex:
+    def build(resume: Resume, job: JobDescription | None = None) -> FactIndex:
+        """Build the index from the user's own resume, optionally widened with a job's text.
+
+        A job description is not the candidate's claim about themselves, but it is text the
+        user themselves supplied and legitimate context for career-intelligence generation (a
+        cover letter naming the role title, an interview question citing a stated requirement) -
+        unlike a resume claim, referencing it verbatim is not a fabrication risk. Passing ``job``
+        only widens what counts as "already known"; it never narrows resume-grounded checking.
+        """
         pieces: list[str] = []
+        if job is not None:
+            if job.title:
+                pieces.append(job.title)
+            pieces.extend(r.text for r in job.requirements)
+            pieces.extend(job.responsibilities)
         if resume.summary:
             pieces.append(resume.summary.value)
         for experience in resume.experience:
@@ -93,7 +107,13 @@ def check(generated_text: str, index: FactIndex) -> list[FactGuardFinding]:
             )
 
     for match in _WORD_RE.finditer(generated_text):
-        word = match.group(0)
+        # A trailing sentence-ending period is not part of the word itself ("Kubernetes." at the
+        # end of a sentence must compare equal to "Kubernetes" in the index) - strip it the same
+        # way a trailing period is already stripped off numbers above. An internal period
+        # ("Node.js") is untouched; only a period at the very end of the match is removed.
+        word = match.group(0).rstrip(".")
+        if not word:
+            continue
         lowered = word.lower()
         if lowered in _STOPWORDS or lowered in index.words:
             continue

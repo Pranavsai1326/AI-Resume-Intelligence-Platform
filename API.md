@@ -1,6 +1,6 @@
 # API
 
-**Version:** v1 · **Base path:** `/v1` · **Last updated:** 2026-08-25
+**Version:** v1 · **Base path:** `/v1` · **Last updated:** 2026-08-25 (Phase 6)
 
 ## Conventions
 
@@ -263,8 +263,6 @@ all" from "something plausibly related is listed."
 | `POST` | `/v1/tailor` | Tailoring proposals for a `job_id` against a resume version. Body: `{document_id, job_id, version_id?}`. Returns a list of proposals: deterministic (skill reordering, required-skill reminders — always available) plus AI-assisted bullet rewrites (needs a configured LLM, capped at 3 bullets per generation). |
 | `POST` | `/v1/tailor/apply` | Apply only the proposals the user accepted. Body: `{document_id, version_id?, label, proposals}`. Creates a new `source: "ai_tailored"` resume version; does not mutate any existing version. |
 
-`POST /v1/cover-letter` and `POST /v1/interview/questions` are Phase 6 work, not yet built.
-
 `POST /v1/ai/rewrite`'s response shape (also used internally by tailoring's per-bullet proposals):
 
 ```json
@@ -283,6 +281,84 @@ returned with `200`, never a fabricated rewrite and never an error that looks li
 `fact_guard_findings` lists any number, organisation, or technology in the generated text that
 does not appear anywhere in the user's own resume content (AI_ARCHITECTURE.md section 5) — surfaced
 to the user, never silently dropped or silently trusted.
+
+## Career intelligence
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/v1/cover-letter` | Body: `{document_id, job_id, version_id?}`. A `{salutation, body_paragraphs, closing}` proposal grounded in the resume and the job's title/requirements. |
+| `POST` | `/v1/interview/questions` | Body: `{document_id, job_id, version_id?}`. 5-8 interview questions, each with a `category`, a rationale, and the specific resume/job detail it's grounded in. |
+| `POST` | `/v1/learning-priorities` | Body: `{document_id, job_id, version_id?}`. Phase 4's skill gaps reordered into a ranked "what to learn next" list — purely deterministic, works with no LLM key configured. |
+
+All three reuse Phase 5's versioned resumes (`version_id` optional — defaults to the document's
+latest version, same as tailoring) and Phase 4's job/skill-gap machinery; none introduces new
+session-storage state of its own.
+
+`POST /v1/cover-letter` response shape:
+
+```json
+{
+  "salutation": "Dear Hiring Team",
+  "body_paragraphs": [
+    "I'm excited to apply for the Senior Backend Engineer role. My experience migrating the billing pipeline to event sourcing at Cascade Systems is directly relevant.",
+    "I also bring hands-on experience with Python and Kubernetes."
+  ],
+  "closing": "Sincerely,",
+  "fact_guard_findings": [],
+  "available": true,
+  "unavailable_reason": null
+}
+```
+
+With no LLM configured, `available` is `false`, every text field is `null`/empty, and
+`unavailable_reason` explains why — the same honest-unavailable shape as `/v1/ai/rewrite`, never
+an error or a fabricated letter. The letter never invents a company name or hiring-manager name;
+it addresses the letter generically ("Dear Hiring Team") unless one is actually given.
+
+`POST /v1/interview/questions` response shape:
+
+```json
+{
+  "questions": [
+    {
+      "question": "Walk me through migrating the billing pipeline to event sourcing.",
+      "category": "technical",
+      "rationale": "You mention this migration directly in your experience section.",
+      "grounded_in": "Migrated the billing pipeline to event sourcing",
+      "fact_guard_findings": []
+    }
+  ],
+  "available": true,
+  "unavailable_reason": null
+}
+```
+
+`category` is one of `behavioral` / `technical` / `situational` / `role_fit`. Both endpoints parse
+the model's JSON response, validate it against a schema, and make one bounded repair attempt on a
+malformed response before giving up as unavailable (AI_ARCHITECTURE.md section 4) — never a
+partially-filled or garbled result.
+
+`POST /v1/learning-priorities` response shape:
+
+```json
+{
+  "priorities": [
+    {
+      "skill": "docker",
+      "requirement_text": "Docker",
+      "importance": "required",
+      "bucket": "missing",
+      "reason": "Not found anywhere in your resume - the most direct gap to close."
+    }
+  ],
+  "semantic_available": false
+}
+```
+
+Ordered required-before-preferred, and within the same importance, a flat `missing` before
+`insufficient_evidence` ("worth confirming") before `moderate` (partial evidence already exists).
+`strong` skill-gap entries are never gaps and are excluded entirely. Needs no LLM provider at all
+— it only reorders and explains data `/v1/match`'s skill-gap computation already produces.
 
 ## Recruiter screening
 

@@ -68,3 +68,49 @@ TAILOR_BULLET = PromptSpec(
     max_output_tokens=120,
     temperature=0.3,
 )
+
+#: Shared instruction for the JSON-in-prompt / bounded-repair structured-output pattern
+#: (AI_ARCHITECTURE.md section 4): ask for JSON directly in the prompt rather than relying on a
+#: provider-specific tool-use feature, since a plain parse-and-validate step works against any
+#: text-completion provider and keeps the abstraction provider-agnostic.
+_JSON_ONLY = (
+    "Respond with ONLY a single valid JSON object matching the schema below - no markdown code "
+    "fences, no preamble, no explanation, nothing before or after the JSON."
+)
+
+COVER_LETTER = PromptSpec(
+    id="cover_letter",
+    version="1.0.0",
+    system=(
+        "You write a concise, professional cover letter body grounded strictly in the "
+        "candidate's own resume and the job's stated requirements. Reference only experience, "
+        f"skills, and achievements that are explicitly present in the resume text given. "
+        f"{_NO_INVENTION} Do not invent a company name or hiring manager name; address it "
+        'generically (e.g. "Dear Hiring Team") unless one is given. '
+        f'{_JSON_ONLY} Schema: {{"salutation": string, "body_paragraphs": string[] (2-4 '
+        'paragraphs, no salutation or closing inside them), "closing": string}}'
+    ),
+    max_input_chars=2000,
+    max_output_tokens=700,
+    temperature=0.4,
+)
+
+INTERVIEW_QUESTIONS = PromptSpec(
+    id="interview_questions",
+    version="1.0.0",
+    system=(
+        "You generate a short interview preparation set for a candidate, based strictly on "
+        "their resume and the job's stated requirements. Each question must be something a real "
+        "interviewer would plausibly ask given the specific resume and job provided - not a "
+        "generic question bank. For each question, give a one-sentence rationale explaining why "
+        "it would be asked, referencing the specific resume or job detail that prompted it. "
+        f"{_NO_INVENTION} "
+        f'{_JSON_ONLY} Schema: {{"questions": [{{"question": string, "category": one of '
+        '"behavioral"|"technical"|"situational"|"role_fit", "rationale": string, '
+        '"grounded_in": string (a short phrase from the resume or job that prompted this '
+        "question)}}] (5-8 items)}}"
+    ),
+    max_input_chars=2500,
+    max_output_tokens=1200,
+    temperature=0.4,
+)

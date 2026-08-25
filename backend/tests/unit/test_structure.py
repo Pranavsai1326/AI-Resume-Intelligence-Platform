@@ -82,6 +82,33 @@ def test_pdf_style_text_without_blank_lines_still_splits_into_entries() -> None:
     ]
 
 
+def test_education_entries_without_blank_line_still_split() -> None:
+    """Regression for a gap noted since Phase 2 and fixed in Phase 6: education entries have no
+    bullets, so the experience/project entry-splitter's bullet-boundary fallback had nothing to
+    anchor on and two entries in a row silently merged into one. A degree line ("B.S. ...") is
+    education's equivalent anchor - it closes out the entry it belongs to."""
+    text = (
+        "EDUCATION\n"
+        "State University, B.S. Computer Science\n"
+        "2011 - 2015\n"
+        "Example College, M.S. Data Science\n"
+        "2016 - 2018\n"
+    )
+    resume = build_resume(text)
+    assert len(resume.education) == 2
+    assert resume.education[0].value.institution == "State University"
+    assert resume.education[0].value.degree == "B.S. Computer Science"
+    assert resume.education[1].value.institution == "Example College"
+    assert resume.education[1].value.degree == "M.S. Data Science"
+
+
+def test_single_education_entry_without_degree_keyword_is_not_split() -> None:
+    """A safe-failure check: an entry with no recognised degree keyword is left as one block
+    rather than risked being split on the wrong line."""
+    resume = build_resume("EDUCATION\nSelf-Taught Institute\nIndependent study, 2020\n")
+    assert len(resume.education) == 1
+
+
 def test_does_not_fabricate_missing_contact_fields() -> None:
     resume = build_resume("EXPERIENCE\nSomething, Somewhere\n- did stuff")
     assert resume.contact.full_name is None

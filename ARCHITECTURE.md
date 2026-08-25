@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-**Last updated:** 2026-08-25 · Companion docs: [PRIVACY_ARCHITECTURE.md](PRIVACY_ARCHITECTURE.md),
+**Last updated:** 2026-08-25 (Phase 6) · Companion docs: [PRIVACY_ARCHITECTURE.md](PRIVACY_ARCHITECTURE.md),
 [AI_ARCHITECTURE.md](AI_ARCHITECTURE.md), [SECURITY.md](SECURITY.md), [API.md](API.md)
 
 ## 1. System shape
@@ -52,8 +52,8 @@ See [ADR-0003](docs/adr/0003-no-application-database.md).
 backend/
   app/
     main.py  config.py  logging.py
-    api/v1/        session documents analysis jobs match resume ai tailor export
-                   [letters interview screening] health
+    api/v1/        session documents analysis jobs match resume ai tailor export career
+                   [screening] health
     core/          errors middleware ratelimit clock deps
     sessions/      store.py memory.py redis_store.py manager.py models.py janitor.py
     documents/     upload.py tempfile_scope.py storage.py sections.py structure.py
@@ -64,9 +64,10 @@ backend/
                    models.py taxonomy.py text_metrics.py scoring_utils.py
     jobs/          models.py parse.py education.py
     matching/      deterministic.py semantic.py gaps.py engine.py
-                   embeddings.py config.py models.py
+                   embeddings.py config.py models.py learning_priorities.py
     ai/            providers.py prompts.py fact_guard.py rewrite.py tailor.py
-                   # LLM only (Phase 5) - local embeddings live in matching/embeddings.py (ADR-0005)
+                   structured.py cover_letter.py interview.py
+                   # LLM only (Phase 5-6) - local embeddings live in matching/embeddings.py (ADR-0005)
     export/        html_template.py pdf.py docx.py
     [screening/     pipeline.py redact.py rank.py compare.py]
     [queue/         base.py inprocess.py arq_queue.py]
@@ -93,7 +94,11 @@ abstraction, prompt registry and fact guard (`ai/providers.py`, `ai/prompts.py`,
 `ai/fact_guard.py`), AI-assisted rewriting and tailoring (`ai/rewrite.py`, `ai/tailor.py`, the
 first real consumers of Layer 3), and PDF/DOCX export (`export/pdf.py` via headless Chromium per
 ADR-0006, `export/docx.py` via python-docx, sharing one HTML template source in
-`export/html_template.py`). The originally-planned single `scoring/` module never materialised as
+`export/html_template.py`). Phase 6 added career intelligence on the same foundation: a shared
+JSON-in-prompt structured-output helper (`ai/structured.py`) plus cover letters and interview
+prep (`ai/cover_letter.py`, `ai/interview.py` — the first features needing multi-field LLM
+output rather than one plain string), and `matching/learning_priorities.py` (pure Layer 1,
+reordering Phase 4's skill gaps, no LLM involved). The originally-planned single `scoring/` module never materialised as
 a separate package - each domain (`analysis/`, `matching/`) keeps its own `config.py` /
 `engine.py`, sharing only the actually-common piece,
 `analysis/scoring_utils.apply_degrade_and_renormalize`, since a resume-health profile and a

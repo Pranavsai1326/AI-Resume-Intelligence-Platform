@@ -1,6 +1,6 @@
 # PRIVACY ARCHITECTURE
 
-**Last updated:** 2026-08-25
+**Last updated:** 2026-08-25 (Phase 6)
 
 Privacy here is an architectural property, not a policy sentence. The guarantee is: *no code path
 exists that writes user content to durable storage.* This document defines that model, the layers
@@ -152,6 +152,12 @@ These are product requirements, not optional extras:
     then discarded, never separately stored. Exported files are streamed and leave no server-side
     artefact — the same property verified for exports generally in item 9, re-verified here
     specifically for the builder's PDF/DOCX endpoint.
+15. Cover letters, interview questions, and learning priorities (Phase 6) carry no resume or job
+    content into logs, are destroyed with their session, and one session cannot reach another's
+    document or job through any of the three endpoints
+    (`backend/tests/privacy/test_resume_builder_privacy.py`). All three reuse the same
+    session-scoped document/job lookup tailoring already uses (item 14) rather than introducing a
+    new storage path to re-verify from scratch.
 
 ## 11. What we tell users — and what we refuse to claim
 

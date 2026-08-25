@@ -230,9 +230,72 @@ def _parse_experience(body: str) -> list[ProvenancedValue[ExperienceEntry]]:
     return entries
 
 
+_DEGREE_KEYWORDS_RE = re.compile(
+    r"\b(bachelor|master|associate|doctorate|ph\.?d\.?|mba|b\.?s\.?|m\.?s\.?|b\.?a\.?|m\.?a\.?|"
+    r"diploma|certificate)\b",
+    re.IGNORECASE,
+)
+
+
+def _split_education_entries(body: str) -> list[str]:
+    """``_split_entries``, with a fallback anchor for education's usual bullet-free shape.
+
+    Education entries rarely have bullets, so ``_split_entries``'s bullet-based fallback (used
+    when a PDF's extracted text collapses the blank line between entries) has nothing to anchor
+    on - two entries in a row silently merge into one. A degree line ("B.S. Computer Science,
+    2015") is education's equivalent of a bullet: it reliably closes out the entry it belongs to,
+    so a following non-degree line (the next entry's institution name) can be treated as a new
+    entry's start the same way a non-bulleted line after a bullet already is.
+    """
+    blocks = _split_entries(body)
+    if len(blocks) != 1:
+        return blocks
+
+    lines = [line for line in blocks[0].split("\n") if line.strip()]
+    if len(lines) < 2:
+        return blocks
+
+    def is_date_only(line: str) -> bool:
+        # A line that is essentially just a date range ("2014 - 2018") belongs to the entry
+        # above it, never a new one - the same "date line beneath the header" shape
+        # `_split_header_and_dates` already recognises for experience entries.
+        date_match = parse_date_range(line)
+        return date_match is not None and len(date_match.raw) >= 0.6 * len(line.strip())
+
+    entries: list[list[str]] = [[lines[0]]]
+    #: The current entry already has its degree line - it is complete once it has also
+    #: consumed (or skipped) an optional date-only line right after it.
+    entry_has_degree = bool(_DEGREE_KEYWORDS_RE.search(lines[0]))
+    awaiting_optional_date = entry_has_degree
+
+    for line in lines[1:]:
+        is_degree_line = bool(_DEGREE_KEYWORDS_RE.search(line))
+
+        if awaiting_optional_date and is_date_only(line):
+            entries[-1].append(line)
+            awaiting_optional_date = False
+            continue
+
+        if entry_has_degree:
+            # The current entry is already complete (degree seen, date consumed or skipped) -
+            # any further line, including one that is itself a new degree/header line, starts
+            # the next entry.
+            entries.append([line])
+            entry_has_degree = is_degree_line
+            awaiting_optional_date = is_degree_line
+            continue
+
+        entries[-1].append(line)
+        if is_degree_line:
+            entry_has_degree = True
+            awaiting_optional_date = True
+
+    return ["\n".join(entry) for entry in entries]
+
+
 def _parse_education(body: str) -> list[ProvenancedValue[EducationEntry]]:
     entries: list[ProvenancedValue[EducationEntry]] = []
-    for block in _split_entries(body):
+    for block in _split_education_entries(body):
         lines = [line for line in block.split("\n") if line.strip()]
         if not lines:
             continue

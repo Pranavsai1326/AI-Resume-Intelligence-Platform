@@ -321,6 +321,52 @@ export interface TailorProposal {
   requires_ai: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Career intelligence (Phase 6): cover letters, interview prep, learning priorities.
+// ---------------------------------------------------------------------------
+
+export interface CoverLetterProposal {
+  salutation: string | null;
+  body_paragraphs: string[];
+  closing: string | null;
+  fact_guard_findings: string[];
+  available: boolean;
+  unavailable_reason: string | null;
+}
+
+export type InterviewQuestionCategory =
+  | "behavioral"
+  | "technical"
+  | "situational"
+  | "role_fit";
+
+export interface InterviewQuestion {
+  question: string;
+  category: InterviewQuestionCategory;
+  rationale: string;
+  grounded_in: string;
+  fact_guard_findings: string[];
+}
+
+export interface InterviewPrepProposal {
+  questions: InterviewQuestion[];
+  available: boolean;
+  unavailable_reason: string | null;
+}
+
+export interface LearningPriority {
+  skill: string;
+  requirement_text: string;
+  importance: RequirementImportance;
+  bucket: SkillGapBucket;
+  reason: string;
+}
+
+export interface LearningPriorityResult {
+  priorities: LearningPriority[];
+  semantic_available: boolean;
+}
+
 export type ExportFormat = "pdf" | "docx";
 
 export interface ExportResult {
@@ -595,6 +641,48 @@ export const api = {
     }),
 
   exportResume,
+
+  generateCoverLetter: (
+    documentId: string,
+    jobId: string,
+    sessionId: string,
+    versionId?: string | null,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<CoverLetterProposal>("/v1/cover-letter", {
+      method: "POST",
+      body: { document_id: documentId, job_id: jobId, version_id: versionId ?? null },
+      sessionId,
+      signal,
+    }),
+
+  generateInterviewQuestions: (
+    documentId: string,
+    jobId: string,
+    sessionId: string,
+    versionId?: string | null,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<InterviewPrepProposal>("/v1/interview/questions", {
+      method: "POST",
+      body: { document_id: documentId, job_id: jobId, version_id: versionId ?? null },
+      sessionId,
+      signal,
+    }),
+
+  getLearningPriorities: (
+    documentId: string,
+    jobId: string,
+    sessionId: string,
+    versionId?: string | null,
+    signal?: AbortSignal,
+  ) =>
+    apiRequest<LearningPriorityResult>("/v1/learning-priorities", {
+      method: "POST",
+      body: { document_id: documentId, job_id: jobId, version_id: versionId ?? null },
+      sessionId,
+      signal,
+    }),
 };
 
 /**

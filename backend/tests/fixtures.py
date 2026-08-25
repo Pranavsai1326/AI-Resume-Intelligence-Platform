@@ -10,6 +10,8 @@ from __future__ import annotations
 import io
 import zipfile
 
+from app.jobs.models import JobDescription
+from app.jobs.parse import parse_job_description
 from app.resume.models import (
     ContactInfo,
     ExperienceEntry,
@@ -226,4 +228,18 @@ def make_resume(
                 provenance=extracted,
             ),
         ],
+    )
+
+
+def make_job() -> JobDescription:
+    """A small structured job description for unit tests, parsed the same way real ones are."""
+    return parse_job_description(
+        "Senior Backend Engineer\n\n"
+        "Requirements\n"
+        "- Python\n"
+        "- Kubernetes\n"
+        "- Docker\n"
+        "- Strong communication skills\n\n"
+        "Preferred\n"
+        "- Rust\n"
     )

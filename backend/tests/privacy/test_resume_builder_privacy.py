@@ -166,3 +166,49 @@ async def test_rewrite_and_tailor_endpoints_log_no_resume_content(
     assert "Zorvath" not in output
     assert "Quillfeather" not in output
     assert "Palewind" not in output
+
+
+async def test_career_endpoints_use_session_scoped_documents_and_jobs(client: AsyncClient) -> None:
+    """Phase 6: cover letter, interview prep, and learning priorities all reuse the same
+    document/job lookup as tailoring - one session must not be able to reach another's."""
+    session_a = await new_session(client)
+    session_b = await new_session(client)
+    document_id = await _upload_document(client, session_a)
+    job = await client.post(
+        "/v1/jobs",
+        json={"text": "Requirements\n- Proficiency in Python\n"},
+        headers={"X-Session-Id": session_a},
+    )
+    job_id = job.json()["job_id"]
+
+    for path in ("/v1/cover-letter", "/v1/interview/questions", "/v1/learning-priorities"):
+        response = await client.post(
+            path,
+            json={"document_id": document_id, "job_id": job_id},
+            headers={"X-Session-Id": session_b},
+        )
+        assert response.status_code == 404, path
+
+
+async def test_career_endpoints_log_no_resume_or_job_content(
+    client: AsyncClient, capsys: pytest.CaptureFixture[str]
+) -> None:
+    session_id = await new_session(client)
+    document_id = await _upload_document(client, session_id)
+    job = await client.post(
+        "/v1/jobs",
+        json={"text": "Requirements\n- Proficiency in Zorvathium scripting\n"},
+        headers={"X-Session-Id": session_id},
+    )
+    job_id = job.json()["job_id"]
+
+    for path in ("/v1/cover-letter", "/v1/interview/questions", "/v1/learning-priorities"):
+        await client.post(
+            path,
+            json={"document_id": document_id, "job_id": job_id},
+            headers={"X-Session-Id": session_id},
+        )
+
+    output = capsys.readouterr().out
+    assert "Zorvathium" not in output
+    assert "Quillfeather" not in output

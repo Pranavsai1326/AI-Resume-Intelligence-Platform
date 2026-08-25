@@ -90,3 +90,31 @@ def test_words_present_in_source_are_not_flagged() -> None:
     text = "Continued building on the Python and Kubernetes work from Cascade Systems."
     findings = check(text, index)
     assert findings == []
+
+
+def test_job_title_is_allowed_when_index_is_built_with_job_context() -> None:
+    """Phase 6: cover letters and interview prep legitimately reference the job's own title and
+    requirements, which is not a claim about the candidate - widening the index with the job
+    must not narrow resume-only checking, only add to it."""
+    from app.jobs.parse import parse_job_description
+    from app.resume.models import Resume
+
+    job = parse_job_description("Staff Platform Reliability Architect\n\nRequirements\n- Go\n")
+    empty_resume = Resume()
+
+    text = "Applying for the Staff Platform Reliability Architect role."
+    resume_only_index = FactIndex.build(empty_resume)
+    with_job_index = FactIndex.build(empty_resume, job)
+
+    assert check(text, resume_only_index) != []  # none of these words are in an empty resume
+    assert check(text, with_job_index) == []  # ...but they are in the job title
+
+
+def test_job_context_never_removes_a_resume_based_finding() -> None:
+    from tests.fixtures import make_job
+
+    index = FactIndex.build(make_resume(), make_job())
+    findings = check("Migrated the pipeline using Snowflake and Databricks.", index)
+    flagged_tokens = {f.token for f in findings}
+    assert "Snowflake" in flagged_tokens
+    assert "Databricks" in flagged_tokens

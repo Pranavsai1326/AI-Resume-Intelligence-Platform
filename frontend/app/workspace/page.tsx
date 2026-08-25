@@ -32,9 +32,9 @@ interface ModuleCard {
   available: boolean;
 }
 
-// Job matching, tailoring, and the resume builder (Phase 4-5) are real and render inline in the
-// upload -> analyze flow above rather than as another "not built yet" card - see
-// ResumeAnalyzer / ResumeBuilder.
+// Job matching, tailoring, the resume builder, and career intelligence (Phase 4-6) are real and
+// render inline in the upload -> analyze flow above rather than as another "not built yet" card -
+// see ResumeAnalyzer / ResumeBuilder / CareerPanel.
 const CANDIDATE_MODULES: ModuleCard[] = [];
 
 const RECRUITER_MODULES: ModuleCard[] = [
@@ -162,11 +162,12 @@ export default function WorkspacePage() {
         </div>
 
         <Alert>
-          <AlertTitle>Phase 5 of the build is live</AlertTitle>
+          <AlertTitle>Phase 6 of the build is live</AlertTitle>
           <p className="text-ink-muted">
-            Upload, resume analysis, job matching, the resume builder, AI-assisted tailoring and
-            export all work end to end below. Anything not built yet is listed honestly with its
-            real status — none of it will show you a fabricated result.
+            Upload, resume analysis, job matching, the resume builder, AI-assisted tailoring,
+            export, cover letters, interview prep and learning priorities all work end to end
+            below. Anything not built yet is listed honestly with its real status — none of it
+            will show you a fabricated result.
           </p>
         </Alert>
 

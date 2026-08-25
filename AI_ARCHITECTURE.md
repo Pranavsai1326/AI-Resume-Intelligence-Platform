@@ -1,6 +1,6 @@
 # AI ARCHITECTURE
 
-**Last updated:** 2026-08-25
+**Last updated:** 2026-08-25 (Phase 6)
 
 ## 1. Three layers, in order of preference
 
@@ -57,9 +57,13 @@ not yet built — see section 10.
 
 ## 4. Structured output and validation
 
-As built for Phase 5's plain-text outputs (a rewritten bullet, a rewritten summary), the provider
-call is unconstrained text completion, not JSON/tool-schema output — there is no structured field
-to parse or validate beyond the raw string. Every response still passes through:
+Two shapes exist, both built on the same `LLMProvider.complete()` — a plain text completion; there
+is no provider-specific tool-use/JSON-schema-constrained call anywhere in the codebase, a
+deliberate choice (Phase 6) to keep the provider abstraction a single, simple contract any
+text-completion API can implement.
+
+**Plain text** (Phase 5 — a rewritten bullet, a rewritten summary): the raw string *is* the
+result. Every response still passes through:
 
 1. **Emptiness/failure check** — a provider exception, timeout, or an empty completion is treated
    identically: the caller gets `available: false` with a specific reason, never a partial or
@@ -69,10 +73,26 @@ to parse or validate beyond the raw string. Every response still passes through:
    limit, provider 5xx); the raw provider exception is logged (model name and category only, never
    response content) and never surfaced to the client.
 
-JSON/tool-schema-constrained output with the fuller parse → schema-validate → semantic-validate
-pipeline originally sketched here is deferred to Phase 6, where cover letters and interview
-questions need genuinely structured multi-field output (a question list with per-item rationale,
-a letter with distinct salutation/body/closing) rather than one plain string.
+**JSON-in-prompt** (Phase 6 — cover letters, interview questions: genuinely multi-field output a
+single string can't carry). The prompt asks for JSON directly and states the schema in plain
+English; `app/ai/structured.py::complete_structured` then runs:
+
+1. **Strict parse** — strip a markdown code fence if present, take the outermost `{...}` span if
+   the model wrapped the object in prose despite instructions, `json.loads`.
+2. **Schema validate** — a Pydantic model; missing/extra/mistyped fields rejected.
+3. **One bounded repair attempt** — on either failure, the broken output and the specific parser
+   or validation error are sent back with "return ONLY the corrected JSON," and the result is
+   parsed and validated again.
+4. **Fallback** — a second failure returns `None`, exactly the same "unavailable" signal as no
+   provider configured. Callers never see two different failure branches to handle.
+5. **Fact guard** (§5) — applied to whichever generated fields carry claims about the candidate
+   (a cover letter's body paragraphs, an interview question's rationale) before the result is
+   returned.
+
+No semantic-validation pass beyond Pydantic's own field types exists yet (no cross-field checks
+like "does this referenced section id actually exist in the session") — nothing built so far has
+needed one; Phase 7's recruiter ranking, if it ever generates structured LLM output referencing
+specific candidates, is the likely place that requirement would first appear for real.
 
 ## 5. Anti-hallucination system
 
@@ -171,15 +191,20 @@ bucket (`app/matching/gaps.py`).
 | Ambiguous requirement classification (required vs preferred) | 1 with 3 assistance on ambiguity only |
 | Explanations, gap narrative, recommendations | 3 |
 | Bullet/summary rewriting, tailoring, cover letters, interview questions | 3 (fact-guarded) |
+| Learning priorities (reordering Phase 4's skill gaps) | 1 |
 | Ranking order | 1 — never 3 |
 
 ## 10. Evaluation
 
-As built for Phase 5: `backend/tests/unit/test_fact_guard.py` exercises the guard directly against
-deliberately hallucinated samples (a fabricated number, a fabricated technology, a genuine
-paraphrase that must *not* false-positive) using a `FakeLLMProvider` (`backend/tests/ai_fakes.py`,
-mirroring the `FakeEmbeddingProvider` pattern from Phase 4) rather than live API calls, so the
-suite stays fast, hermetic, and free. A dedicated fixture corpus of synthetic resumes/JDs with
-scored extraction-accuracy and prompt-version-tracked evaluation runs — closer to a proper eval
-harness — is not yet built; tracked as Phase 6+ follow-up once cover letters and interview
-questions give the eval suite more surface worth measuring.
+`backend/tests/unit/test_fact_guard.py` exercises the guard directly against deliberately
+hallucinated samples (a fabricated number, a fabricated technology, a genuine paraphrase that must
+*not* false-positive) using a `FakeLLMProvider` (`backend/tests/ai_fakes.py`, mirroring the
+`FakeEmbeddingProvider` pattern from Phase 4) rather than live API calls, so the suite stays fast,
+hermetic, and free. Phase 6 extended this with coverage for the job-context widening (a job title
+referenced verbatim must not be flagged, but a genuine resume-fact violation must still be caught
+regardless) and for `app/ai/structured.py`'s JSON parse/schema-validate/one-repair-attempt/give-up
+pipeline directly (malformed JSON, a schema mismatch, and a repair that succeeds on the second
+attempt, each asserted against the exact number of provider calls made). A dedicated fixture
+corpus of synthetic resumes/JDs with scored extraction-accuracy and prompt-version-tracked
+evaluation runs — closer to a proper eval harness — is still not built; tracked as a Phase 7+
+follow-up once recruiter screening gives the eval suite meaningfully more surface to measure.

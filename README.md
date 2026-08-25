@@ -16,11 +16,10 @@ cleanup, authoritative TTL expiry, a periodic janitor sweep, and a startup sweep
 
 ## Status
 
-**Phase 5 complete** — a full resume builder: section editing with live preview, in-session
-version history, AI-assisted bullet/summary rewriting and job tailoring (the first LLM-backed
-features — honestly reports itself unavailable with no API key configured, and every generated
-line is checked against the user's own resume content before it's ever shown), and PDF/DOCX
-export. Phase 6 (cover letters, interview prep) is next.
+**Phase 6 complete** — career intelligence on top of the Phase 5 resume builder: AI-drafted cover
+letters and interview prep questions, each grounded in the resume and job and checked against them
+before ever being shown, plus deterministic learning priorities ranked from Phase 4's skill gaps
+that need no AI key at all. Phase 7 (recruiter screening) is next.
 See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Running it locally

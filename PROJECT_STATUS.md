@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 5 complete → Phase 6 ready to start
+**Last updated:** 2026-08-25 · **Current phase:** Phase 6 complete → Phase 7 ready to start
 
 > Read this file first in every session, then only the architecture docs relevant to the task.
 > Update it after every meaningful implementation change.
@@ -296,28 +296,93 @@ assumption that it wouldn't be available; `/ready` now reports `pdf_export: true
    request body regardless of what the Python wrapper's typed surface exposes; the underlying
    Messages API has always accepted `temperature` as a top-level field.
 
+### Phase 6 — Career intelligence
+
+**Backend** (`backend/app/ai/`, `backend/app/matching/`)
+
+| Area | Delivered |
+|---|---|
+| Structured LLM output | `app/ai/structured.py`: JSON-in-prompt output (the prompt asks for JSON directly, rather than a provider-specific tool-use feature) with strict parse → Pydantic schema validate → one bounded repair attempt → honest `None` on failure. Chosen over Anthropic tool-use so `LLMProvider` stays a plain text-completion interface any provider can implement (see Decisions below) |
+| Cover letters | `app/ai/cover_letter.py`: a `{salutation, body_paragraphs, closing}` proposal grounded in the resume and the job's title/requirements, fact-guarded before it's ever returned. Never invents a company or hiring-manager name — addresses generically unless one is actually given |
+| Interview prep | `app/ai/interview.py`: 5-8 questions, each with a `category` (behavioral/technical/situational/role_fit), a rationale, and a `grounded_in` span — not a generic question bank. The rationale of every question is itself fact-guarded |
+| Fact guard, widened | `app/ai/fact_guard.py`'s `FactIndex.build` now takes an optional `job: JobDescription` — the job's title/requirements/responsibilities are legitimate context (the user's own JD, not a claim about the candidate), so referencing them verbatim in a cover letter or interview question is never flagged. Widening only adds allowed terms; it never suppresses a genuine resume-fact violation |
+| Learning priorities | `app/matching/learning_priorities.py`: pure Layer 1 — reorders Phase 4's skill-gap buckets into a ranked "what to learn next" list (required before preferred; within the same importance, a flat miss before "worth confirming" before partial evidence). Needs no LLM, no key, nothing new to compute |
+| API | `POST /v1/cover-letter`, `POST /v1/interview/questions`, `POST /v1/learning-priorities` — all three take `{document_id, job_id, version_id?}`, reusing Phase 5's versioned resumes and Phase 4's job/skill-gap machinery rather than introducing a new persistence kind |
+| Parser fix | Fixed the Phase 2 gap noted since Phase 4: two education entries with no blank line between them (a PDF-extraction artefact) used to collapse into one, because the bullet-boundary fallback that rescues multi-entry experience/project sections has nothing to anchor on for education, which is usually bullet-free. A degree line ("B.S. Computer Science") is now recognised as education's equivalent anchor — it closes out the entry it belongs to, so the next line (or the next degree line, for the "Institution, Degree" single-line-per-entry format) correctly starts a new one. `app/documents/structure.py::_split_education_entries` |
+
+**Frontend** (`frontend/components/builder/career-panel.tsx`)
+
+One "Career intelligence" panel, added below tailoring in the resume builder: paste a job
+description once, then three cards — cover letter and interview prep (Layer 3, showing the same
+calm "AI writing is not configured" state as Phase 5's AI controls when no key is set, and
+surfacing fact-guard findings directly rather than hiding them), and learning priorities (Layer 1,
+works immediately with no key, ranked with a plain-language reason per item).
+
+**Verification** — all green:
+
+```
+backend    495 passed, 10 skipped (Redis, no server present)   ruff clean   mypy clean
+frontend   37 passed   eslint clean   tsc --noEmit clean   next build clean
+```
+
+Verified live against a running frontend and backend: workspace loads with the updated "Phase 6
+of the build is live" banner and zero console errors; `/ready` capabilities render correctly
+(`llm: not configured`, `pdf export: available` — Playwright's Chromium is genuinely installed in
+this environment). Full click-through of the career panel itself (paste JD → generate → review)
+was not driven through the browser automation tool available this session, since it has no
+file-picker support to get past the upload step that gates the builder — covered instead by the
+unit, integration, and privacy test suites, matching the same limitation noted for Phase 5.
+
+### Defects found and fixed during Phase 6
+
+1. **Fact guard's word-matching regex included a trailing sentence period in the matched token**
+   (`_WORD_RE`'s allowed-character class includes `.`, needed for tokens like "Node.js"), so a
+   sentence-ending mention of an already-known term — e.g. "...experience with Kubernetes." —
+   compared "kubernetes." against the index's "kubernetes" and never matched, producing a false
+   positive on ordinary, fully-grounded generated text. Caught while writing the cover-letter
+   test for "a grounded letter has zero fact-guard findings," which failed on first run. Fixed by
+   stripping a trailing period the same way trailing punctuation is already stripped off numbers;
+   an internal period ("Node.js" mid-sentence) is untouched since only the match's *last*
+   character is trimmed.
+2. **The Phase 2 education multi-entry-without-blank-line parser gap**, open since Phase 2 and
+   explicitly deferred through Phases 4 and 5 — see Backend row above.
+
+### Decisions made during Phase 6
+
+**JSON-in-prompt over Anthropic tool-use for structured output.** Cover letters and interview
+questions are the first features needing multi-field output (Phase 5's rewriting only ever
+returned one plain string). Considered forcing a tool call via the Anthropic SDK's tool-use
+feature for a stronger shape guarantee, but that would tie `LLMProvider`'s contract to a
+capability not every provider implements the same way, adding a second integration surface to
+maintain. Asking for JSON in the prompt and validating what comes back keeps the provider
+abstraction as plain text completion; the cost is needing a parse-and-repair step, built once in
+`app/ai/structured.py` and reused by both callers.
+
 ## In progress
 
-Nothing. Phase 5 is committed.
+Nothing. Phase 6 is committed.
 
-## Next task — Phase 6 (career intelligence)
+## Next task — Phase 7 (recruiter screening)
 
-1. Cover letter generation grounded in session facts (resume + JD), fact-guarded the same way as
-   tailoring
-2. Interview preparation: question set with a "why this is asked" rationale per question, traced
-   to a resume or JD span
-3. Learning/skill-gap priorities derived from Phase 4's skill-gap buckets
-4. Fix the Phase 2 education multi-entry-without-blank-line gap (still open — see Known Issues);
-   the builder UI shipped in Phase 5 is where a user would notice a collapsed entry, so this is a
-   good point to revisit it
-5. Tests: AI-unavailable fallback, fact-guard catch rate against deliberately hallucinated
-   samples, API and privacy tests for the new endpoints
+1. Bulk resume upload and an async job queue (`JobQueue` protocol: in-process pool for dev, ARQ +
+   Redis for production) — screening must never block inside an HTTP request
+2. Per-candidate pipeline: validate → extract → structure → redact protected attributes → embed →
+   match → component scores, reusing Phase 3/4's scoring engine rather than a parallel one
+3. Ranking with pagination/filtering/sorting, a per-candidate "why ranked #N" explainable
+   breakdown, and a comparison matrix over stored component scores (no recomputation, no extra
+   LLM calls)
+4. Redaction of protected attributes before any model or ranking logic sees candidate text, with
+   `redaction: {applied, fields}` disclosed in every screening response (PRD's explainability and
+   no-protected-attributes rules)
+5. Shortlisting (session-scoped) and export
+6. Tests: redaction correctness, ranking explainability, privacy tests proving one recruiter
+   session cannot see another's candidate pool, and that queued jobs for an expired session are
+   cancelled with their inputs dropped
 
 ## Planned
 
 | Phase | Scope |
 |---|---|
-| 7 | Recruiter screening: bulk async pipeline, extraction, ranking, comparison, shortlist, export |
 | 8 | Production hardening: security, rate limits, retries, performance, monitoring, AI evaluation, cost |
 | 9 | Deployment: environments, CI/CD, health checks, monitoring, smoke tests, DEPLOYMENT.md + TESTING.md |
 
@@ -357,8 +422,7 @@ No Docker, no Redis, no database and no API key is needed to run any of the abov
 |---|---|---|
 | Redis not installed | Redis backend unexercised locally | 10 conformance tests skip with a clear reason; run them with `TEST_REDIS_URL` set. Memory backend covers development |
 | Tesseract not installed | Scanned/image-only PDFs fail with `422 NO_EXTRACTABLE_TEXT` | Provider abstraction built in Phase 2 (`app.documents.extract.ocr`); feature-detected and reported false by `/ready`, honest error rather than silent failure or fake text |
-| No LLM key | Layer 3 (AI writing, tailoring, cover letters, interview prep) cannot run | `/ready` reports `llm: false`. `NullLLMProvider` reports every AI feature honestly unavailable rather than erroring or fabricating; deterministic tailoring (skill reordering, requirement reminders) works with no key at all. Semantic matching (Phase 4) needed no key and is confirmed working — ADR-0005's bet on local ONNX embeddings paid off |
-| Education entries without a blank line between them collapse into one | Rare, narrow resume-parsing gap (Phase 2) surfaced by a Phase 4 test | Still documented, not yet fixed; queued for Phase 6 |
+| No LLM key | Layer 3 (AI writing, tailoring, cover letters, interview prep) cannot run | `/ready` reports `llm: false`. `NullLLMProvider` reports every AI feature honestly unavailable rather than erroring or fabricating; deterministic tailoring (skill reordering, requirement reminders) and learning priorities work with no key at all. Semantic matching (Phase 4) needed no key and is confirmed working — ADR-0005's bet on local ONNX embeddings paid off |
 | No CI pipeline yet | Gates run locally only | Phase 9 |
 
 ## Current blockers
@@ -368,5 +432,7 @@ None.
 ## Open questions (non-blocking; defaults chosen and documented)
 
 1. **Hosting target** — undecided; architecture stays platform-neutral until Phase 9.
-2. **LLM credentials** — needed before Phase 5/6 can be exercised end to end, not before.
+2. **LLM credentials** — needed before Phase 5/6's AI-backed features (rewriting, tailoring's
+   bullet rewrites, cover letters, interview prep) can be exercised end to end with a real model;
+   every deterministic path in both phases, plus learning priorities, needs no key at all.
 3. **Session TTL defaults** — 60 min idle / 8 h absolute / 120 s release grace; revisit against real usage.

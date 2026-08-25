@@ -3,6 +3,7 @@
 import * as React from "react";
 import { AlertCircle, Loader2, Save } from "lucide-react";
 
+import { CareerPanel } from "@/components/builder/career-panel";
 import { ExportButtons } from "@/components/builder/export-buttons";
 import { ResumePreview } from "@/components/builder/resume-preview";
 import { SectionEditor } from "@/components/builder/section-editor";
@@ -186,6 +187,8 @@ export function ResumeBuilder({ documentId, sessionId }: { documentId: string; s
         sessionId={sessionId}
         onApplied={onTailorApplied}
       />
+
+      <CareerPanel documentId={documentId} versionId={currentVersionId} sessionId={sessionId} />
     </div>
   );
 }

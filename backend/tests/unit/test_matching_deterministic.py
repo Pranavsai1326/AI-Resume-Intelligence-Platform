@@ -137,10 +137,9 @@ def test_total_years_experience_empty_resume() -> None:
 
 
 def test_highest_education_level_picks_the_best_across_entries() -> None:
-    # Blank-line separated, as most resumes do: two education entries with no bullets and no
-    # blank line between them collapse into one (app.documents.structure's entry-boundary
-    # fallback anchors on bullets, which education entries typically don't have) - a known,
-    # narrow gap tracked in PROJECT_STATUS.md rather than a case this test needs to cover.
+    # Blank-line separated, as most resumes do. The no-blank-line, no-bullets case (which used to
+    # collapse two education entries into one) is covered directly by
+    # tests/unit/test_structure.py::test_education_entries_without_blank_line_still_split.
     text = (
         "EDUCATION\n"
         "State University, Associate Degree\n2010 - 2012\n\n"
