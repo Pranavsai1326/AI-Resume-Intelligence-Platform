@@ -127,8 +127,12 @@ class Settings(BaseSettings):
     #: treated as a real credential.
     gemini_api_key: str = ""
     #: A current, low-cost/free-tier-friendly Gemini Flash model - configurable so a
-    #: deprecated or renamed model id never needs a code change to fix.
-    llm_model_gemini: str = "gemini-2.5-flash"
+    #: deprecated or renamed model id never needs a code change to fix. Confirmed live against
+    #: the real API during Phase 9F verification: "gemini-2.5-flash" (this project's original
+    #: choice) returned 404 "no longer available to new users", with the API itself naming
+    #: "gemini-3.6-flash" as its replacement - exactly the scenario this setting being
+    #: configurable, rather than hardcoded, exists to make a one-line fix instead of a redeploy.
+    llm_model_gemini: str = "gemini-3.6-flash"
     llm_timeout_seconds: int = Field(default=60, ge=1)
     #: "fastembed" by default (ADR-0005: local ONNX, no API key, resume text stays server-side).
     #: Falls back honestly if the package or model cannot load - see

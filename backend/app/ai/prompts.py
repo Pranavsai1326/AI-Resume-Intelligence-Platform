@@ -18,6 +18,13 @@ class PromptSpec:
     #: Input is truncated at this many characters before being sent, with the truncation
     #: disclosed to the caller rather than silently applied (AI_ARCHITECTURE.md section 7).
     max_input_chars: int
+    #: Sized generously enough to cover a "thinking" model's mandatory internal reasoning tokens
+    #: on top of the visible answer, not just the visible answer itself - confirmed necessary
+    #: live against Gemini during Phase 9F: a budget sized for the visible text alone (the
+    #: original values here, tuned against Claude, which has no equivalent hidden token tax)
+    #: silently truncated Gemini's response mid-reasoning, returning a garbled sentence fragment
+    #: as "success" rather than an error. A larger cap does not force a longer answer out of any
+    #: provider; it only raises the ceiling before truncation can occur.
     max_output_tokens: int
     temperature: float
 
@@ -53,7 +60,7 @@ REWRITE_BULLET = PromptSpec(
         "preamble, no explanation, no markdown."
     ),
     max_input_chars=400,
-    max_output_tokens=120,
+    max_output_tokens=1024,
     temperature=0.3,
 )
 
@@ -66,7 +73,7 @@ REWRITE_SUMMARY = PromptSpec(
         "the rewritten summary text - no quotes, no preamble, no explanation, no markdown."
     ),
     max_input_chars=800,
-    max_output_tokens=200,
+    max_output_tokens=1024,
     temperature=0.3,
 )
 
@@ -82,7 +89,7 @@ TAILOR_BULLET = PromptSpec(
         "preamble, no explanation, no markdown."
     ),
     max_input_chars=500,
-    max_output_tokens=120,
+    max_output_tokens=1024,
     temperature=0.3,
 )
 
@@ -109,7 +116,7 @@ COVER_LETTER = PromptSpec(
         'paragraphs, no salutation or closing inside them), "closing": string}}'
     ),
     max_input_chars=2000,
-    max_output_tokens=700,
+    max_output_tokens=2048,
     temperature=0.4,
 )
 
@@ -129,6 +136,6 @@ INTERVIEW_QUESTIONS = PromptSpec(
         "question)}}] (5-8 items)}}"
     ),
     max_input_chars=2500,
-    max_output_tokens=1200,
+    max_output_tokens=3072,
     temperature=0.4,
 )

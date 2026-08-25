@@ -158,11 +158,35 @@ the client.
   and `npm audit --audit-level=high` run on every push/PR, currently `continue-on-error` (advisory,
   not yet a merge-blocking gate, since triaging a finding sometimes takes longer than a single PR).
   As of this writing: `pip-audit` reports no known vulnerabilities in the backend's installed
-  packages; `npm audit --audit-level=high` reports 3 high-severity advisories, all in `next`'s
-  transitive `postcss`/`sharp` dependencies (XSS in PostCSS's CSS stringifier, a libvips CVE in
-  `sharp`), fixable only via a breaking `next` major-version bump - deliberately not force-upgraded
-  without a dedicated regression pass (see PROJECT_STATUS.md's Known Issues), tracked as an open
-  item rather than silently accepted.
+  packages (including `google-genai`, added Phase 9F).
+* **`npm audit` findings, investigated in full (Phase 9I/9J), not just re-run:**
+  - `postcss <=8.5.22` (high, XSS via unescaped `</style>` in stringified output, plus three
+    source-map path-disclosure advisories) - a **hard-pinned direct dependency of `next` itself**
+    (`8.4.31` in every `15.x` release checked, including the latest `15.5.24`; only `next@16.3.3`
+    bundles a patched `8.5.23`). No semver-compatible fix exists within the `15.x` line - confirmed
+    by inspecting `next@15.5.24`'s own `dependencies` via `npm view`, not assumed from the audit
+    output alone. **Deployed-usage exposure: low.** This project's only PostCSS input is its own
+    trusted `globals.css`/Tailwind classes via `@tailwindcss/postcss` (`postcss.config.mjs`) -
+    never attacker-controlled CSS, which is what every one of these advisories requires to matter.
+  - `sharp <0.35.0` (high, inherited libvips CVEs) - an **optional** dependency of `next` (only
+    exercised by `next/image`'s server-side optimisation). **Deployed-usage exposure: none** -
+    grepping `app/` and `components/` confirms `next/image` is never imported anywhere in this
+    codebase, so the installed `sharp` binary is dormant, not reachable through any request path.
+    Unlike `postcss`, a compatible fix *is* theoretically possible here (`next@15.5.24` accepts
+    `sharp ^0.34.3 || ^0.35.3`, so a `package.json` `overrides` entry pinning `0.35.3+` would clear
+    this finding without a major bump) - not applied, since it would fix a finding with zero actual
+    exposure while adding an unmeasured integration risk (an override next never tested against)
+    for no real security benefit.
+  - `next` itself (high) - reported only because it *depends on* the two vulnerable packages above;
+    same root cause and same conclusion.
+  - **Why the major upgrade is deferred, not just "not force-upgraded":** `next@16.3.3` raises the
+    minimum Node.js requirement from `^18.18.0 || ^19.8.0 || >=20.0.0` to `>=20.9.0`, and a major
+    version of a framework this central to the app (App Router, build pipeline, `next/image`,
+    middleware) warrants its own regression pass against the full 9D/9E UI rather than being
+    bundled into an unrelated session's verification work. **Required future migration work:**
+    confirm the deployment Node version is ≥20.9, read `next@16`'s breaking-changes list end to
+    end, re-run the full frontend suite plus a full manual click-through of every redesigned screen,
+    and re-run `npm audit` to confirm all three findings actually clear post-upgrade (not assumed).
 * Dependency additions are justified in review — every new parser is new attack surface.
 * Frontend has no CDN-loaded scripts; assets are self-hosted.
 * Container images (when introduced in Phase 9) run as a non-root user with a read-only root

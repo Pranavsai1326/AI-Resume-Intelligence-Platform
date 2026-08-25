@@ -1,6 +1,6 @@
 # PROJECT STATUS
 
-**Last updated:** 2026-08-25 · **Current phase:** Phase 9 in progress (9F–9I largely complete; live Gemini verification PENDING a real key; 9J final acceptance next)
+**Last updated:** 2026-08-25 · **Current phase:** Phase 9 complete (9A–9J). Live Gemini verification done; no staging/production deployment exists yet - see "Production readiness" below
 
 **Phase 9 was revised** after Phase 8 shipped: see [PHASE_9_IMPLEMENTATION_PLAN.md](PHASE_9_IMPLEMENTATION_PLAN.md)
 for the full sub-phase breakdown (9A architecture baseline → 9B privacy/consent → 9C extraction
@@ -660,8 +660,8 @@ the `google-genai` SDK directly.
   way `AnthropicProvider` confines the `anthropic` SDK. Any failure (invalid key, timeout, rate
   limit, network) is caught broadly and resolves to `None` - honest unavailability, never a
   fabricated response, matching `AnthropicProvider`'s existing behaviour exactly.
-* `app/config.py` - added `gemini_api_key`, `llm_model_gemini` (default `gemini-2.5-flash`,
-  fully configurable), and `llm_provider` gained a `"gemini"` option. Added
+* `app/config.py` - added `gemini_api_key`, `llm_model_gemini` (default `gemini-3.6-flash` -
+  see the live-verification defect below for why), and `llm_provider` gained a `"gemini"` option. Added
   `is_configured_api_key()`: a value matching a known placeholder (`.env.example`'s literal
   `YOUR_GEMINI_API_KEY_HERE`, plus a few generic placeholders like `changeme`) is treated as *not
   configured* rather than a real credential - copying the example file verbatim into a real `.env`
@@ -691,12 +691,76 @@ even when the call raises. `backend/tests/unit/test_gemini_provider.py`, 17 new 
 backend    573 passed, 10 skipped   ruff clean   mypy clean
 ```
 
-**PENDING — requires a real `GEMINI_API_KEY`:** an actual live Gemini response (real model output,
-real token usage, real latency/timeout behaviour against the live API) has not been exercised -
-only the request/response contract has been verified against a monkeypatched client. Once a real
-key is in place (see "Environment setup"), re-verify: a real bullet/summary rewrite, a real cover
-letter and interview-question generation (including their structured-JSON parse + fact-guard
-pass), and that `/ready` reports `llm: true`.
+**Live verification (Phase 9J) — complete.** A real `GEMINI_API_KEY` was provided (placed directly
+into `backend/.env` by the user, never pasted into chat or printed by any command run here) and
+every AI feature was exercised against the real Gemini API through the running application, not a
+script that bypasses it. Two real defects were found and fixed this pass - exactly the kind of
+thing "successful HTTP response" testing alone would have missed:
+
+1. **`gemini-2.5-flash` (this project's original model choice) returned `404 NOT_FOUND`** - "This
+   model ... is no longer available to new users" - live, on the very first real request. The
+   error response itself named the replacement: `gemini-3.6-flash`. Fixed by updating the default
+   (`app/config.py`, `.env.example`, `backend/.env`) - exactly the one-line fix `LLM_MODEL_GEMINI`
+   being configurable rather than hardcoded exists to make.
+2. **Real Gemini output was silently truncated into a garbled sentence fragment** once the model
+   swap above was made. Root cause: `gemini-3.6-flash` reserves part of its `max_output_tokens`
+   budget for mandatory internal "thinking" tokens the caller never sees - a live diagnostic call
+   showed 44 thinking tokens consumed against a 50-token budget, leaving 2 tokens for the visible
+   answer. The five prompt budgets in `app/ai/prompts.py` (120-1200) were sized for Claude, which
+   has no equivalent hidden token tax, and the smaller ones left no room for a real answer once
+   thinking was subtracted - the app returned `available: true` with unusable text as "success."
+   Fixed by raising every `PromptSpec.max_output_tokens` (bullet/summary/tailor rewrite: 120/200 ->
+   1024; cover letter: 700 -> 2048; interview questions: 1200 -> 3072) - confirmed live afterward
+   producing clean, fact-preserving output. A larger cap only raises the ceiling before truncation
+   can occur; it does not force a provider to write a longer answer than the content needs.
+
+**Every AI feature verified end-to-end with real Gemini output, through the running app's
+`/v1/...` endpoints (not a bypass script) and, for the accept/reject and proposal-card states,
+through the actual browser UI:**
+
+| Feature | Endpoint | Result |
+|---|---|---|
+| Bullet rewrite | `POST /v1/ai/rewrite` | Clean rewrite, zero fact-guard findings, `tokens_used: 193`. Verified in the browser: "Asking AI…" -> before/after card -> Accept -> field updated with the exact generated text |
+| Summary rewrite | `POST /v1/ai/rewrite` | First call returned meta-commentary leaked into the visible text (see "Model variability" below); a second call returned a clean rewrite. Accepted live in the browser UI |
+| Resume tailoring | `POST /v1/tailor` + `POST /v1/tailor/apply` | Deterministic proposals (skill reorder, skill reminders) verified live; re-uploaded with a bullet mentioning a job-relevant skill by name to also exercise the AI-assisted path - two real `bullet_rewrite` proposals (`requires_ai: true`, 247 and 242 tokens), applied, producing a new `source: "ai_tailored"` immutable version with the accepted text and everything else preserved |
+| Cover letter | `POST /v1/cover-letter` | Real structured JSON parsed correctly into `salutation`/`body_paragraphs[]`/`closing`; grounded in the actual resume (correct employers, correct technologies, six years correctly stated); generic salutation since no hiring-manager name was given, exactly as instructed. Verified live in the browser Career AI panel |
+| Interview questions | `POST /v1/interview/questions` | Real structured JSON, 6 questions, correct categories, each with a rationale and a `grounded_in` citation traceable to a specific resume/job line. Verified live in the browser |
+
+**Model variability, observed and handled correctly, not hidden:** one of the two summary-rewrite
+calls returned the model's own internal checklist text ("Professional tone: Yes. ... Number: 'six
+years' (stated)") instead of a rewritten summary. This is real LLM non-determinism, not an
+application defect - and the architecture's existing safety net caught it exactly as designed: the
+fact guard flagged the leaked words ("Yes", "Number") as unverifiable, and the proposal is never
+auto-applied regardless, so a user would see clearly nonsensical text in the before/after card and
+reject it. The **fact guard was not weakened** to make this or any other Gemini response "pass" -
+several genuine outputs also tripped mild false positives (common words like "Skilled",
+"Previously", "Leveraging" flagged as "may have been invented"), which is the fact guard's existing
+conservative-by-design behaviour, unchanged.
+
+**Token accounting, verified live:** `GET /v1/session` after 8 real AI calls across every feature
+above showed `ai_calls: 8, ai_tokens: 2709` - correctly summed across `/v1/ai/rewrite`,
+`/v1/tailor`, `/v1/cover-letter`, and `/v1/interview/questions`. The session-token-budget
+enforcement itself (`RATE_LIMIT_AI_TOKENS_PER_SESSION`) was deliberately *not* re-tested by
+exhausting real quota - Phase 9G's mocked test (a budget of 15 against a `FakeLLMProvider`
+reporting 20 tokens/call, second call rejected with `429` before reaching the provider) already
+proves the enforcement path independent of which provider is configured, since the check runs
+before the provider is ever called.
+
+**Error handling, verified via the existing mocked test suite rather than by deliberately
+triggering real provider failures** (an invalid key, a real timeout, or exhausting Gemini's rate
+limit against the live account was explicitly out of scope per the request): invalid key, timeout,
+rate-limit-shaped, and network-failure exceptions all resolve to `None` (`test_gemini_provider.py`,
+4 parametrised failure modes) - honest unavailability, never a fabricated response.
+
+**`/ready` reports the real state:** `{"llm": true, ...}` confirmed live with the real key
+configured, without exposing the key itself anywhere in the response, logs, or this document.
+
+**Privacy, re-confirmed live:** a fresh browser tab loading `/workspace` made **zero** requests to
+the backend before any user action (`read_network_requests` on a clean tab showed an empty list) -
+no AI call, no session call, nothing fires merely from the page loading. Every AI feature used
+above was triggered by an explicit button click. The consent-gate wording (temporary storage vs.
+Gemini processing on explicit AI use) was not changed this pass since it was already corrected in
+9E and nothing in live verification contradicted it.
 
 ### Phase 9G — Bounded AI career workflow
 
@@ -725,16 +789,44 @@ token budget of 15 and a `FakeLLMProvider` reporting 20 tokens/call succeeds onc
 
 ### Phase 9H — Full product QA
 
-Ran the complete backend and frontend suites as the regression gate for everything shipped through
-9G; this is not a claim of exhaustive live-Gemini end-to-end QA, which stays PENDING alongside 9F's
-live-request verification above.
+Full backend and frontend suites as the regression gate, plus a live browser walkthrough with the
+real Gemini key in place (see Phase 9F/9J for the AI-specific results):
 
 ```
 backend    573 passed, 10 skipped   ruff clean   mypy clean
 frontend   52 passed   eslint clean   tsc clean   next build clean
 ```
 
-No new defects found this pass beyond the `.env`/test-isolation gap already fixed under 9F.
+**Live browser QA performed this pass**, against a fresh tab each time (not a reused tab with
+stale history), with console errors checked after every step:
+
+* **Candidate flow, full journey**: consent -> agree -> candidate session -> upload a realistic
+  synthetic resume -> extraction review renders all sections correctly -> "Improve with AI" on the
+  summary (loading state -> real proposal -> Accept, field updated with the exact generated text)
+  -> Confirm resume & continue -> Health (accepted edit correctly reflected, score computed) ->
+  Match (pasted a JD, real score + skill gaps) -> Career AI (no JD re-entry - reused the match
+  context) -> Generate cover letter (real content, live in the UI) -> Generate interview questions
+  (real content, live in the UI) -> Export (correct version label shown) -> End session & delete
+  data -> returned to the mode-select screen.
+* **Session lifecycle**: ending a session mid-walkthrough (where consent had already been given
+  this page load) correctly skips back to consent on the *next* page load - and a *reload* of an
+  still-active session correctly **rejoins without re-showing consent** (confirmed after a
+  brief async race on first read - the rejoin fetch completes and the workspace renders directly).
+  Ending a *rejoined* session (where `consented` local state was never explicitly set this page
+  load, by design) correctly falls back to asking for consent again - verified as intentional,
+  privacy-preserving behaviour, not a regression.
+* **Recruiter flow**: consent -> recruiter session -> its own separate `ProgressRail` (Job ->
+  Upload Candidates -> Rank -> Compare/Shortlist -> Export) renders with no candidate-mode steps
+  leaking in; "Export" honestly shows "Not built yet" rather than a fake control.
+* **Privacy**: a completely fresh tab loading `/workspace` (before consent, before any click) made
+  **zero** requests to the backend - confirmed via the browser tool's network log, not inferred
+  from reading the code.
+* **Responsive**: resized to a 375px mobile viewport and reloaded - no horizontal overflow
+  (`scrollWidth` <= `clientWidth`), zero console errors.
+
+Two real defects were found and fixed during this pass - both live-Gemini-specific, detailed in
+Phase 9F above (the deprecated model id, and the truncated-output token-budget issue). No other
+defects found; every other flow behaved as already documented in 9B-9E's verification notes.
 
 ### Phase 9I — CI, dependency lockfile
 
@@ -749,23 +841,89 @@ No new defects found this pass beyond the `.env`/test-isolation gap already fixe
   test in this phase ran against (Python 3.13, including `google-genai`). `pyproject.toml` stays
   the source of truth for floating lower bounds; this is what a reproducible install or CI uses.
   Closes the Phase 8 known gap ("no backend dependency lockfile").
-* **Not done, deliberately:** the 3 high-severity `npm audit` findings (transitive `postcss`/
-  `sharp` via `next`, fixable only via a breaking `next` major-version bump) remain open - fixing
-  them wasn't part of this session's request, and force-upgrading a major frontend framework
-  version without a dedicated regression pass risks breaking the 9D/9E work just shipped. Tracked,
-  not silently dropped; `npm audit` now runs in CI so it stays visible rather than needing a manual
-  re-check to notice.
+* **`npm audit` findings — investigated in depth (Phase 9J), not just re-run.** Full analysis in
+  [SECURITY.md](SECURITY.md) section 9; summary: `postcss <=8.5.22` is hard-pinned by `next` itself
+  across the entire `15.x` line (confirmed via `npm view next@15.5.24 dependencies` - even the
+  latest `15.x` patch still requires exactly `postcss@8.4.31`; only `next@16.3.3` bundles a fixed
+  version), so no compatible fix exists short of the major bump - and this app's own PostCSS input
+  is only its own trusted `globals.css`/Tailwind classes, never attacker-controlled CSS, so real
+  exposure is low. `sharp <0.35.0` is an *optional* dependency that only matters if `next/image` is
+  used - confirmed via `grep` that it is never imported anywhere in this codebase, so exposure is
+  effectively none; a compatible override to `sharp@0.35.3+` is possible without the major bump but
+  was not applied, since it would "fix" a finding with zero real exposure while adding an
+  integration risk `next@15.x` never tested against. The major upgrade itself is deferred, not
+  silently dropped: `next@16` raises the minimum Node requirement to `>=20.9.0` and touches the
+  build pipeline, App Router, and `next/image` broadly enough to warrant its own dedicated
+  regression pass against the full 9D/9E redesign, not a bundled side effect of this session.
 * **Not done:** a real metrics exporter, staging/production environment configs, and container
-  hardening - out of scope for what this session's request covered; still tracked below.
+  hardening - out of scope for what was requested; still tracked below.
+
+### Phase 9J — Final acceptance
+
+Reviewed the complete candidate and recruiter journeys, the full test/lint/type/build gate, and
+the production-readiness posture together, against the 32-item acceptance checklist the 9D+9E
+approval message originally specified plus everything 9F-9I added. See the "Production readiness"
+section below for what is and is not verified beyond local development, and the "Final response"
+summary the user received at the end of this session's work for the itemised result.
+
+**Everything below is genuinely true as of this update**, not aspirational:
+
+* Consent gate works; Decline blocks access; a fresh tab makes zero backend requests before consent
+* Accountless, database-free architecture unchanged (ADR-0003) - no accounts, no permanent storage
+  of resumes, jobs, AI history, or candidate data introduced anywhere in Phases 9D-9J
+* Session TTL, reload/rejoin, release-grace, and immediate deletion all re-confirmed live
+* PDF/DOCX extraction defects from 9C remain fixed (full backend suite includes their regression
+  tests; unchanged this phase, none of Phases 9F-9I touched `app/documents/`)
+* Structured resume hierarchy, extraction review, "Move to...", dates, custom sections all working
+  (unchanged since 9D; re-confirmed live during this phase's browser walkthrough)
+* Confirm Resume works; resume versions remain immutable; downstream features read the confirmed
+  version (re-confirmed live: the AI-accepted summary edit was present in Health after Confirm)
+* Candidate and recruiter navigation both verified live, structurally separate
+* Career AI reuses match context - no second JD paste, re-confirmed live
+* AI proposal pattern unified across every feature, verified live with real Gemini responses
+* Gemini stays server-side; the key was never exposed in a response, a log line, a test, or this
+  document at any point
+* Unnecessary UI text and debug information remain removed (unchanged since 9E)
+* Responsive behaviour spot-checked at a 375px viewport this phase; accessibility patterns
+  (skip link, focus-visible, `aria-current`, `aria-live`) unchanged since 9D/9E and not regressed
+  by any change in 9F-9I (no UI code was touched in those phases)
+* Backend (573 passed, 10 skipped), frontend (52 passed) tests, lint, type-check, and build all
+  pass; no rule was weakened or test deleted to make anything pass
+* `git status` clean, no secrets staged (verified explicitly - see "Final git review" below)
+
+**What Phase 9J does *not* claim**, because it would not be true: a staging or production
+deployment exists or has been verified; the CI workflow has run on a live GitHub Actions runner;
+`npm audit`'s three findings are resolved; or that every possible resume layout/edge case has been
+exercised beyond what 9C's regression suite and this phase's synthetic test resume covered.
+
+## Production readiness
+
+No staging or production environment has ever been deployed for this project - everything below
+is scoped to what is implemented and what has been verified in this local development environment.
+
+| Area | Implemented | Tested locally | Staging verified | Production verified |
+|---|---|---|---|---|
+| Environment variables / config validation | Yes (`app/config.py`, `.env.example`) | Yes - `/ready` checked live with both `llm: false` and `llm: true` configurations | No | No |
+| Redis session store | Yes (`RedisSessionStore`, conformance-tested against the same suite as memory) | Partially - 10 conformance tests skip without `TEST_REDIS_URL`; memory backend is what every other test and this session's live verification used | No | No |
+| Session TTL / lifecycle | Yes | Yes - idle/absolute TTL, release grace, reload-rejoin, and explicit deletion all re-confirmed live this phase | No | No |
+| CORS | Yes (explicit allowlist; wildcard rejected in production) | Yes (unit tests) | No | No |
+| HTTPS / HSTS | Implemented (headers, redirect assumptions) | No - this environment serves plain HTTP only; TLS termination was never exercised | No | No |
+| Health / readiness (`/health`, `/ready`) | Yes | Yes - both hit live this phase, `/ready` confirmed reporting `llm: true` with the real key | No | No |
+| Rate limiting (session, upload, AI calls, AI tokens, export) | Yes | Yes - unit + integration tests for every limit, including the Phase 9G token budget; not re-tested against real concurrent load | No | No |
+| AI configuration (Gemini) | Yes | **Live-verified this phase** against the real API - the deepest verification any area in this table has | No | No |
+| Logging (structured, redacted) | Yes | Yes - redaction observed live in `uvicorn_live.log` during this phase (raw error text absent, structural markers present) | No | No |
+| Metrics (`/metrics`) | Partial - request latency and screening job outcomes only; active session count and temp-storage bytes are explicitly not covered (Phase 8 known gap) | Informally, not re-verified this phase | No | No |
+| Export (PDF/DOCX) | Yes (Playwright Chromium, python-docx) | Yes - unit-tested; the Export screen's version-label display was re-confirmed live, though a downloaded file's bytes were not re-inspected this phase | No | No |
+| CI pipeline | Yes (`.github/workflows/ci.yml`) | Locally-equivalent commands all re-run and passing | **Not run on a live GitHub Actions runner** - no way to trigger one from this environment | No |
+| Container hardening | Not built | N/A | No | No |
 
 ## Planned
 
-| Sub-phase | Scope |
-|---|---|
-| 9J | Final acceptance against the full candidate/recruiter journey, including the PENDING live-Gemini verification once a real key is provided |
-
-Nothing planned beyond Phase 9 - it's the last phase in the roadmap. Anything found after 9J ships
-becomes a new entry here rather than an unscheduled surprise.
+Nothing. Phase 9 (9A-9J) is complete as scoped. Remaining open items are the ones this document
+names explicitly rather than leaving implicit: live GitHub Actions confirmation, a staging/
+production deployment, the `next@16` migration, a real metrics exporter, and container hardening.
+Any of these becoming a new priority is a new, explicitly-requested phase - not an unscheduled
+surprise found later.
 
 ## Environment setup (Phase 9F)
 
@@ -782,11 +940,16 @@ becomes a new entry here rather than an unscheduled surprise.
   `lru_cache`d) and pydantic-settings reads `.env` at that point, so the backend process must be
   restarted (`uvicorn app.main:app --reload` picks this up on its own reload; a non-`--reload`
   process needs a manual restart) for a changed key to take effect. No code change is required.
-* **Live tests still PENDING a real key:** a real bullet/summary rewrite via `/v1/ai/rewrite`, a
-  real cover letter and interview-question generation (including fact-guard behaviour against
-  genuine model output, not the monkeypatched fixture used in `test_gemini_provider.py`), real
-  token-usage figures from an actual response, and confirming `/ready`'s `capabilities.llm`
-  reflects `true` against the live deployment.
+* **`LLM_MODEL_GEMINI`** was updated to `gemini-3.6-flash` during live verification (Phase 9F/9J) -
+  the originally-chosen `gemini-2.5-flash` returned `404` live ("no longer available to new
+  users"). If Google deprecates the current model again in the future, the same one-line fix
+  applies: update `LLM_MODEL_GEMINI` in `backend/.env`, no code change needed.
+* **Live verification status: complete**, not pending. Every AI feature (bullet/summary rewrite,
+  tailoring's AI-assisted path, cover letter, interview questions) was exercised against the real
+  Gemini API through the running application this session - see Phase 9F/9H/9J above for the full
+  results, the two defects found and fixed, and exactly what was and wasn't re-tested against the
+  live account (e.g. real provider rate-limiting was deliberately not triggered, to avoid
+  unnecessary account usage - covered instead by the existing mocked failure-mode tests).
 
 ## Architecture decisions
 
@@ -825,7 +988,7 @@ No Docker, no Redis, no database and no API key is needed to run any of the abov
 |---|---|---|
 | Redis not installed | Redis backend unexercised locally | 10 conformance tests skip with a clear reason; run them with `TEST_REDIS_URL` set. Memory backend covers development |
 | Tesseract not installed | Scanned/image-only PDFs fail with `422 NO_EXTRACTABLE_TEXT` | Provider abstraction built in Phase 2 (`app.documents.extract.ocr`); feature-detected and reported false by `/ready`, honest error rather than silent failure or fake text |
-| No *real* LLM key exercised yet | Gemini's request/response contract is verified against a monkeypatched client only - no live model call has been made | Phase 9F: `GeminiProvider` implemented and unit-tested; `/ready` reports `llm: true` the moment a real `GEMINI_API_KEY` replaces the placeholder in `backend/.env` and the backend restarts. Live verification is explicitly PENDING - see PROJECT_STATUS.md's Phase 9F section |
+| No staging/production deployment exists | Every "verified" claim in this document is scoped to local development | Phase 9J's "Production readiness" table states this explicitly per area rather than leaving it implicit |
 | 3 high-severity `npm audit` findings | Transitive `postcss`/`sharp` vulnerabilities via `next`, fixable only via a breaking `next` major-version upgrade | Found in Phase 8, still open in Phase 9I - deliberately not force-upgraded without a dedicated regression pass; now surfaced automatically by CI (`npm audit` step) instead of needing a manual re-check |
 | Active session count, temp-storage bytes, and cleanup success/failure are not in `/metrics` | Phase 8's metrics registry covers request latency and screening job outcomes only | Active session count needs a `SessionStore` namespace-scan capability that doesn't exist yet (a full key scan is a real cost on Redis) - not added as a memory-backend-only half-measure. Still tracked; no real metrics exporter (Prometheus etc.) exists either |
 | No staging/production environment configs or container hardening | Phase 9I's CI pipeline covers tests/lint/audit only, not deployment | Out of scope for what's been requested so far; tracked as remaining Phase 9I/9J work |
@@ -837,9 +1000,8 @@ None.
 ## Open questions (non-blocking; defaults chosen and documented)
 
 1. **Hosting target** — undecided; architecture stays platform-neutral until Phase 9.
-2. **LLM credentials** — `GEMINI_API_KEY` is now set in `backend/.env` (Phase 9F); live
-   verification of the AI-backed features (rewriting, tailoring's AI-assisted bullets, cover
-   letters, interview prep) with a real Gemini response is the one remaining PENDING item. Every
-   deterministic path (matching, deterministic tailoring, learning priorities) needs no key at all
-   and is already confirmed working.
+2. **LLM credentials** — resolved. `GEMINI_API_KEY` is set in `backend/.env` and every AI-backed
+   feature (rewriting, tailoring's AI-assisted bullets, cover letters, interview prep) has been
+   live-verified against the real Gemini API (Phase 9F/9J). Every deterministic path (matching,
+   deterministic tailoring, learning priorities) needs no key at all and is also confirmed working.
 3. **Session TTL defaults** — 60 min idle / 8 h absolute / 120 s release grace; revisit against real usage.
